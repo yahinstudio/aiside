@@ -18,12 +18,14 @@ the package is permitted. Changing this changes the install flow, so treat it as
 decision. See `AiSIDE_开发改进实施文档_v1.0.md` §11 for the proposed direction.
 
 - **Run all tests:** `node tools/test_parse.js`
-  - Pure Node, no framework. Outputs `PASS`/`FAIL` per case (~42 cases).
+  - Pure Node, no framework. Outputs `PASS`/`FAIL` per case (~47 cases).
   - Exits non-zero if any case prints `FAIL` (or a case throws), so CI can gate on the exit code.
   - There is **no single-test filter.** Tests are flat functions invoked by an async IIFE
     at the bottom of the file; to run one, comment out the others in that IIFE.
   - The harness resolves source paths relative to the repo root (`path.resolve(__dirname, "..")`),
     so the repo can be moved or cloned anywhere.
+- **CI:** `.github/workflows/ci.yml` runs syntax checks, a manifest parse, and the test harness on
+  every push to `main` and every PR. There is no build step, so CI has nothing to package.
 - **Regenerate icons:** `powershell -ExecutionPolicy Bypass -File tools/gen_icons.ps1`
   (uses .NET System.Drawing to produce `icons/icon{16,48,128}.png`).
 - **Install/run:** `chrome://extensions` → enable Developer mode → "Load unpacked" → this directory.
@@ -61,10 +63,47 @@ If you add a shared file, wire it into every HTML that needs it.
   `thinking:{type:"disabled"}` and other values → `reasoning_effort`. Empty = send nothing
   (follow server default) — do not force a default, some providers reject unknown params.
 
+### Permissions — least privilege, and what it costs
+`host_permissions` covers only the fixed provider hosts (DeepSeek chat + its two `hif-*` token
+hosts, Kimi, `api.bilibili.com`, `aisubtitle.hdslb.com`). Everything else is reached through
+`activeTab` or `optional_host_permissions` (`https://*/*`, `http://localhost/*`,
+`http://127.0.0.1/*`). Three consequences are deliberate, not accidents:
+
+- **Page access needs `activeTab`.** Clicking the action or the keyboard command grants it; a click
+  *inside* the side panel does **not**. So "总结当前网页" after a tab switch is denied — the panel
+  detects the permission error and offers a one-click grant (`showPermissionError`).
+- **Custom API origins are granted at runtime**, per origin, when the Base URL is saved in the
+  options page (`ensureApiOriginPermission`). A save without a user gesture cannot prompt.
+- **Kimi attachment upload targets a server-signed URL**, whose origin cannot be declared ahead of
+  time; when that PUT is refused the run degrades to inline text and says so in the panel
+  (`panel-note`) rather than failing silently.
+
+Do not widen `host_permissions` back to `http(s)://*/*` — `testManifestPermissions` fails if you do.
+
+### SSE reading and timeouts (shared by every streaming path)
+`sseEvents` in `common.js` is the single SSE reader for the OpenAI/Gemini path, both DeepSeek and
+Kimi chat streams, and Kimi's file-parse wait. It normalises CRLF, handles line splits across
+chunks and `event:` lines, and **flushes the buffer at EOF** so a final record without a trailing
+newline is not lost (the three original copies all dropped it).
+
+`makeStreamAbort(externalSignal)` pairs the caller's cancellation with an idle timeout
+(`SSE_IDLE_TIMEOUT_MS`, 120s without data). Checking a deadline only between `reader.read()` calls
+cannot fire while a read is pending, so the timer aborts the controller instead — that is what
+actually unblocks a stalled connection. Kimi's 3-minute parse wait uses the same pattern.
+
+### Provider contract (informal)
+Each provider module is a plain global exposing `getToken`, `ensureToken(s)`, `createSession` and
+`sendMessage`; Kimi adds `uploadFile` / `waitFileParsed`. `streamChat` dispatches on
+`settings.activeProvider`. This is intentionally *not* an ES-module interface — introducing modules
+or a bundler would break "load unpacked from the repo root" and the `executeScript` self-containment
+rule above, so it is out of scope until that trade-off is revisited.
+
 ### One summarize run (the `summarize()` function in `sidepanel.js`)
 Fetches settings → validates protocol/PDF → extracts material → builds messages → streams.
-A monotonically increasing `seq` cancels stale runs (new triggers and tab switches abort the
-previous `AbortController`). Any async step re-checks `mySeq !== seq` before touching the DOM.
+A monotonically increasing `seq` cancels stale runs (new triggers, tab switches, and same-tab
+navigation abort the previous `AbortController`). Any async step re-checks `mySeq !== seq` before
+touching the DOM. `tabs.onUpdated` marks a summary stale when the summarized tab navigates in place
+(it does *not* re-summarize on its own — that would spend the user's quota while they browse).
 
 ### Content extraction — injected functions must stay self-contained
 `extractPageText` and `extractBilibili` (both in `common.js`) are serialized by
@@ -73,6 +112,11 @@ previous `AbortController`). Any async step re-checks `mySeq !== seq` before tou
 (`cleanBodyHtml`, `md5hex`, `getMixinKey`) are inlined deliberately; do not hoist them out.
 - Normal pages inject `extractPageText` (isolated world), size-limited by provider:
   `API_MAX_CHARS` and `DS_MAX_CHARS` in `sidepanel.js` (both currently 60000).
+- Kimi file mode also asks for `bodyHtml`. `cleanBodyHtml` rebuilds a **visible-only** tree from the
+  original DOM (drops `hidden`, `aria-hidden`, and computed `display:none`) instead of cloning and
+  stripping attributes — stripping erases the hidden markers and would upload hidden text.
+  `href` keeps only http/https with query+hash removed; attachments over 2 MB fall back to text and
+  explain why through `htmlNote`. Both are asserted by the Kimi sanitizer tests.
 - Bilibili injects `extractBilibili` into the **MAIN world** because the `api.bilibili.com`
   calls need the page's `.bilibili.com` cookies (`credentials:"include"`). Subtitle JSON is
   *not* fetched there (CORS to `aisubtitle.hdslb.com`); it returns a URL that the side panel

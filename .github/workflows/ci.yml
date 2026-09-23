@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # 本扩展没有构建步骤（无打包、无 package.json），CI 只做语法检查与单元测试。
+      - name: 语法与 manifest 检查
+        run: |
+          for f in *.js tools/*.js; do node --check "$f"; done
+          node -e "JSON.parse(require('node:fs').readFileSync('manifest.json','utf8'))"
+
+      # 任一用例 FAIL 或抛异常都会返回非零退出码（见 tools/test_parse.js 末尾）
+      - name: 单元测试
+        run: node tools/test_parse.js
