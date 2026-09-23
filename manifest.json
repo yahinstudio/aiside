@@ -32,8 +32,17 @@
     "webRequest"
   ],
   "host_permissions": [
-    "http://*/*",
-    "https://*/*"
+    "https://chat.deepseek.com/*",
+    "https://www.kimi.com/*",
+    "https://hif-leim.deepseek.com/*",
+    "https://hif-dliq.deepseek.com/*",
+    "https://api.bilibili.com/*",
+    "https://aisubtitle.hdslb.com/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
   ],
   "commands": {
     "summarize-page": {

@@ -49,8 +49,31 @@ function applyModeVisibility() {
   $("custom-gemini-fields").style.display = provider === "gemini" ? "" : "none";
 }
 
+// 自定义 API 的 origin 按需授权：host_permissions 不再预授权全站站点，
+// 保存 Base URL 时就地申请该 origin 的访问权限（request 需在用户手势内调用）
+async function ensureApiOriginPermission(provider) {
+  let origin;
+  try {
+    origin = validateBaseUrl(provider.baseUrl).origin + "/*";
+  } catch (_) {
+    return false; // Base URL 非法，collectAndSave 已报告
+  }
+  try {
+    if (await chrome.permissions.contains({ origins: [origin] })) return true;
+    const granted = await chrome.permissions.request({ origins: [origin] });
+    if (!granted) {
+      setStatus(provider.type, "✗ 未授予 " + origin + " 的访问权限，该接口暂时无法调用", "err");
+    }
+    return granted;
+  } catch (_) {
+    // 非用户手势路径（自动保存）会拒绝 request：不阻断保存，调用时会给出明确提示
+    setStatus(provider.type, "提示：尚未授权 " + origin + "，修改 Base URL 后重新保存即可授权", "err");
+    return false;
+  }
+}
+
 // 收集全部设置并从表单即时保存
-function collectAndSave() {
+async function collectAndSave() {
   const providers = {};
   for (const key of PROVIDER_KEYS) providers[key] = gatherProvider(key);
   // Base URL 校验：非法（远端明文 HTTP、协议不符、主机名缺失）时拒绝保存，
@@ -63,8 +86,12 @@ function collectAndSave() {
     } catch (e) {
       setStatus(key, "✗ " + friendlyError(e), "err");
       showToast("保存失败：Base URL 不合法");
-      return Promise.resolve();
+      return;
     }
+  }
+  // 静态 host_permissions 已收窄，自定义 API 域名需按 origin 显式授权
+  for (const key of API_KEYS) {
+    if (providers[key].baseUrl) await ensureApiOriginPermission(providers[key]);
   }
   const activeProvider = getSelectedProvider();
   const fontSize = Number($("font-size").value) || 15;
@@ -78,10 +105,9 @@ function collectAndSave() {
     prompt: prompt.trim() ? prompt.trim() : DEFAULT_PROMPT,
     rememberApiKeys: $("remember-api-keys").checked,
   };
-  return saveSettings(settings).then(() => {
-    $("prompt").value = settings.prompt;
-    showToast("已保存");
-  });
+  await saveSettings(settings);
+  $("prompt").value = settings.prompt;
+  showToast("已保存");
 }
 
 function fillDatalist(key, models) {

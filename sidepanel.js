@@ -39,7 +39,39 @@ function showError(msg, action) {
       : "") +
     `</div>`;
   const btn = document.getElementById("error-action");
-  if (btn) btn.addEventListener("click", () => chrome.tabs.create({ url: action.url }));
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    if (typeof action.onClick === "function") action.onClick();
+    else if (action.url) chrome.tabs.create({ url: action.url });
+  });
+}
+
+// 注入被拒（缺少站点权限）时的恢复入口：点按即就地申请可选的全站访问权限。
+// 背景：扩展图标与快捷键触发会由 activeTab 授权；切换标签页后在面板内点「总结当前网页」
+// 不属于用户手势，拿不到 activeTab，因此需要用户显式授权一次。
+function showPermissionError() {
+  showError("无法读取当前网页内容：需要你授权扩展访问该网站。", {
+    label: "授权访问网站并重试",
+    onClick: async () => {
+      try {
+        const granted = await chrome.permissions.request({
+          origins: ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+        });
+        if (granted) summarize();
+        else showError("已取消授权，无法读取网页内容。也可改用扩展图标或 Ctrl+Shift+U 触发。");
+      } catch (e) {
+        showError("授权失败：" + friendlyError(e));
+      }
+    },
+  });
+}
+
+// 降级说明（如 Kimi 附件模式不可用）：贴在总结结果上方，让用户知道本次走了哪条路径
+function renderNote(note) {
+  const el = document.createElement("div");
+  el.className = "degrade-note";
+  el.textContent = note;
+  contentEl.prepend(el);
 }
 
 // 尚未就绪的提示：Base URL 校验未通过的 provider 给出具体原因
@@ -55,13 +87,15 @@ function notReadyMessage(settings) {
 // ---------------- 材料组装 ----------------
 
 function buildUserMessage(page) {
+  const notice = UNTRUSTED_DATA_NOTICE + "\n\n";
   if (page.mode === "bilibili") {
     return (
+      notice +
       "以下是从 B 站视频页提取的资料（标题/简介/自动字幕整理成的 Markdown），" +
       "请基于这份资料进行总结：\n\n" + page.text
     );
   }
-  return `网页标题：${page.title || "(无标题)"}\n网页地址：${page.url}\n\n网页正文：\n${page.text}`;
+  return notice + `网页标题：${page.title || "(无标题)"}\n网页地址：${page.url}\n\n网页正文：\n${page.text}`;
 }
 
 function biliErrorText(d) {
@@ -81,6 +115,7 @@ async function summarize() {
   activeCtrl = ctrl;
   let tab = null;
   let provider = null;
+  let step = ""; // 失败点定位：据此区分"缺少站点权限"与其他错误
 
   try {
     const settings = await getSettings();
@@ -112,6 +147,7 @@ async function summarize() {
 
     // 取页面材料：B 站视频页走专用接口，其余页面注入提取正文
     let page;
+    step = "extract";
     if (isBilibiliVideoUrl(tab.url)) {
       showLoading("正在获取 B 站视频信息与字幕");
       const results = await chrome.scripting.executeScript({
@@ -173,10 +209,13 @@ async function summarize() {
         showError("未提取到有效正文：页面内容可能为空、暂时无法访问，或需要登录后才能查看。");
         return;
       }
-      page = { mode: "web", title: p.title, url: p.url, text: p.text, bodyHtml: p.bodyHtml };
+      page = { mode: "web", title: p.title, url: p.url, text: p.text, bodyHtml: p.bodyHtml, htmlNote: p.htmlNote };
     }
 
     const model = provider.defaultModel;
+    // 本次总结走了哪条非默认路径（如 Kimi 附件不可用），最终贴在结果上方
+    const notes = [];
+    if (page.htmlNote) notes.push(page.htmlNote);
 
     // 账号模式：确认登录态后，提示词与正文合并为单条消息发送
     let messages;
@@ -208,6 +247,13 @@ async function summarize() {
             if (e && e.name === "AbortError") throw e;
             if (mySeq !== seq) return;
             kimiFileId = null;
+            // 上传目标由服务端预签名地址决定，扩展无法预先声明其 host 权限；
+            // 此类失败一律降级为内联文本，并把原因告知用户，避免静默改变行为
+            const raw = String((e && e.message) || e);
+            const reason = /permission|denied|Failed to fetch|NetworkError|Load failed/i.test(raw)
+              ? "无法访问文件存储域名（缺少站点权限）"
+              : friendlyError(e);
+            notes.push("未能上传附件（" + reason + "），已改用内联文本总结。");
             console.warn("[AiSIDE] Kimi 文件上传/解析失败，降级为内联文本:", e);
           }
         }
@@ -217,6 +263,7 @@ async function summarize() {
       if (provider.type === "kimi" && kimiFileId) {
         const fileKind = page.bodyHtml ? "网页完整 HTML 文件" : "整理后的页面资料";
         userContent =
+          UNTRUSTED_DATA_NOTICE + "\n\n" +
           `网页标题：${page.title || "(无标题)"}\n网页地址：${page.url}\n\n` +
           `附件是${fileKind}，请先阅读附件内容再继续。`;
       } else {
@@ -293,11 +340,21 @@ async function summarize() {
       return;
     }
     contentEl.innerHTML = renderMarkdown(full);
+    // 倒序 prepend，保持 notes 的原有顺序
+    for (let i = notes.length - 1; i >= 0; i--) renderNote(notes[i]);
   } catch (err) {
     if (mySeq !== seq || (err && err.name === "AbortError")) return;
-    let msg = friendlyError(err);
-    if (tab && /^file:/i.test(tab.url) && /cannot access|permission|denied/i.test(msg)) {
-      msg += "；请确认已在 chrome://extensions 中本扩展的详情页开启「允许访问文件网址」。";
+    const msg = friendlyError(err);
+    const denied = /cannot access|permission|denied/i.test(msg);
+    if (tab && /^file:/i.test(tab.url) && denied) {
+      showError(msg + "；请确认已在 chrome://extensions 中本扩展的详情页开启「允许访问文件网址」。");
+      return;
+    }
+    // 非 file 页面的注入被拒：通常是缺少站点权限
+    //（切换标签页后在面板内触发不会授予 activeTab，见 §5.4）
+    if (denied && step === "extract") {
+      showPermissionError();
+      return;
     }
     // 账号模式登录态失效：在错误面板提供可点击的登录入口
     const action =
