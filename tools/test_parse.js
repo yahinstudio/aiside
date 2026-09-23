@@ -3,14 +3,52 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
+// 失败汇总：任一用例打印 FAIL 即让进程以非零码退出（原实现只打印，CI 无法感知失败）
+let failedCount = 0;
+const rawLog = console.log.bind(console);
+console.log = (...args) => {
+  const line = args.map((a) => String(a)).join(" ");
+  if (line.includes("FAIL")) failedCount++;
+  rawLog(...args);
+};
+
 const ROOT = path.resolve(__dirname, "..");
 
+// 按 key 取子集：兼容字符串与数组入参，语义同 chrome.storage 各区的 get
+function pick(obj, key) {
+  if (typeof key === "string") return key in obj ? { [key]: obj[key] } : {};
+  const out = {};
+  for (const k of key) if (k in obj) out[k] = obj[k];
+  return out;
+}
+
+function del(obj, key) {
+  for (const k of Array.isArray(key) ? key : [key]) delete obj[k];
+}
+
+// chrome.storage 替身（local + session），行为与真实 API 一致；areas 可直接断言
+function makeStorageMock(seed = {}) {
+  const areas = { local: { ...(seed.local || {}) }, session: { ...(seed.session || {}) } };
+  const area = (name) => ({
+    get: async (k) => pick(areas[name], k),
+    set: async (o) => Object.assign(areas[name], o),
+    remove: async (k) => del(areas[name], k),
+  });
+  return { areas, local: area("local"), session: area("session") };
+}
+
 const ctx = {
-  chrome: { storage: { local: { get: async () => ({}), set: async () => {} } } },
+  chrome: {
+    storage: {
+      local: { get: async () => ({}), set: async () => {}, remove: async () => {} },
+      session: { get: async () => ({}), set: async () => {}, remove: async () => {} },
+    },
+  },
   console,
   Math,
   JSON,
   TextDecoder,
+  URL,
   Array,
   Set,
   Promise,
@@ -515,6 +553,289 @@ async function testDeepSeekStream() {
   delete ctx.window;
 }
 
+// PoW Worker 替身：收到任务立即回一个合法 nonce，使 buildStreamHeaders 能走完
+class FakeWorker {
+  constructor() { this.listeners = {}; }
+  addEventListener(type, fn) {
+    (this.listeners[type] = this.listeners[type] || []).push(fn);
+  }
+  removeEventListener(type, fn) {
+    const l = this.listeners[type];
+    if (l) this.listeners[type] = l.filter((x) => x !== fn);
+  }
+  postMessage() {
+    for (const fn of this.listeners.message || []) fn({ data: { answer: 1 } });
+  }
+  terminate() {}
+}
+
+// 构造 deepseek.js 的上下文；tokens 为初始会话凭据，freshToken 模拟刷新后 webRequest 捕获的新值
+function makeDeepSeekCtx(fetchHandler, { tokens, freshToken } = {}) {
+  const storage = makeStorageMock(tokens ? { session: { ds_token: tokens } } : {});
+  const dctx = {
+    window: {},
+    chrome: {
+      storage,
+      tabs: {
+        create: async () => {
+          if (freshToken) storage.areas.session.ds_token = freshToken;
+          return { id: 1 };
+        },
+        remove: async () => {},
+        onUpdated: {
+          addListener: (l) => setTimeout(() => l(1, { status: "complete" }), 0),
+          removeListener() {},
+        },
+      },
+      scripting: { executeScript: async () => [{ result: null }] },
+      runtime: { getURL: (p) => "chrome-extension://test/" + p },
+    },
+    console,
+    fetch: fetchHandler,
+    TextDecoder,
+    TextEncoder,
+    Uint8Array,
+    Uint32Array,
+    URL,
+    navigator: { hardwareConcurrency: 2 },
+    Worker: FakeWorker,
+    btoa: (s) => Buffer.from(s, "binary").toString("base64"),
+    setTimeout,
+    clearTimeout,
+    Promise, JSON, Error, Object, String, Number, Math, Array, Set,
+  };
+  vm.createContext(dctx);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, "common.js"), "utf8"), dctx);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, "deepseek.js"), "utf8"), dctx);
+  return dctx;
+}
+
+// DeepSeek 401 回归：首次 401 后刷新 token，重试的 Authorization、PoW 挑战请求
+// 以及 finally 中的会话删除都必须使用新 token（旧实现在这三处全部沿用旧 token）
+async function testDeepSeekAuthRetry() {
+  const calls = [];
+  const json = (obj) => ({ status: 200, ok: true, json: async () => obj });
+  const challenge = {
+    data: {
+      biz_data: {
+        challenge: {
+          algorithm: "DeepSeekHashV1",
+          challenge: "ab".repeat(32),
+          salt: "salt",
+          signature: "sig",
+          target_path: "/api/v0/chat/completion",
+          expire_at: 1700000000,
+          difficulty: 10,
+        },
+      },
+    },
+  };
+  let completion = 0;
+  const d = makeDeepSeekCtx(
+    async (url, o) => {
+      url = String(url);
+      const auth = (o && o.headers && o.headers.Authorization) || "";
+      calls.push({ url, auth });
+      if (url.includes("hif-")) return { status: 500, ok: false };
+      if (url.includes("/api/v0/chat/create_pow_challenge")) return json(challenge);
+      if (url.includes("/api/v0/chat/completion")) {
+        completion++;
+        if (completion === 1) return { status: 401, ok: false, text: async () => "" };
+        return {
+          status: 200,
+          ok: true,
+          body: makeReader(['data: {"p":"response/content","v":"你好"}\n']),
+        };
+      }
+      return json({});
+    },
+    { tokens: "OLD_TOKEN", freshToken: "NEW_TOKEN" }
+  );
+
+  let out = "";
+  for await (const c of d.window.DEEPSEEK.sendMessage("s1", "正文", null)) out += c;
+  await new Promise((r) => setTimeout(r, 20)); // 等 finally 中的删除请求发出
+
+  const comps = calls.filter((c) => c.url.includes("/api/v0/chat/completion"));
+  const pows = calls.filter((c) => c.url.includes("create_pow_challenge"));
+  const dels = calls.filter((c) => c.url.includes("chat_session/delete"));
+  const ok =
+    out === "你好" &&
+    comps.length === 2 &&
+    comps[0].auth === "Bearer OLD_TOKEN" &&
+    comps[1].auth === "Bearer NEW_TOKEN" &&
+    pows.length === 2 &&
+    pows[1].auth === "Bearer NEW_TOKEN" &&
+    dels.length === 1 &&
+    dels[0].auth === "Bearer NEW_TOKEN";
+  console.log(
+    "DeepSeek 401 刷新重试:",
+    ok
+      ? "PASS"
+      : "FAIL " +
+          JSON.stringify({
+            out,
+            comps: comps.map((c) => c.auth),
+            pows: pows.map((c) => c.auth),
+            dels: dels.map((c) => c.auth),
+          })
+  );
+}
+
+function testValidateBaseUrl() {
+  const cases = [
+    ["https://api.example.com/v1", true],
+    ["http://localhost:11434/v1", true],
+    ["http://127.0.0.1:8080", true],
+    ["http://[::1]:8080/v1", true],
+    ["http://api.example.com/v1", false],
+    ["ftp://api.example.com", false],
+    ["不是 URL", false],
+    ["", false],
+  ];
+  const bad = [];
+  for (const [input, want] of cases) {
+    let got = false;
+    try {
+      ctx.validateBaseUrl(input);
+      got = true;
+    } catch (_) {
+      got = false;
+    }
+    if (got !== want) bad.push({ input, want, got });
+  }
+  console.log("Base URL 校验:", bad.length ? "FAIL " + JSON.stringify(bad) : "PASS");
+}
+
+// 存量非法 Base URL：读取设置时标记 disabled，isReady 视为未配置；合法项不受影响
+async function testDisabledLegacyBaseUrl() {
+  const storage = makeStorageMock({
+    local: {
+      settings: {
+        activeProvider: "openai",
+        providers: {
+          openai: { type: "openai", baseUrl: "http://api.example.com/v1", apiKey: "k", defaultModel: "m" },
+          gemini: { type: "gemini", baseUrl: "https://generativelanguage.googleapis.com", apiKey: "k", defaultModel: "m" },
+        },
+      },
+    },
+  });
+  const sctx = {
+    chrome: { storage },
+    console, URL, Promise, JSON, Error, Object, String, Number, Math, Array, Set,
+  };
+  vm.createContext(sctx);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, "common.js"), "utf8"), sctx);
+
+  const settings = await sctx.getSettings();
+  const bad = settings.providers.openai;
+  const good = settings.providers.gemini;
+  const ok =
+    bad.disabled === true &&
+    String(bad.disabledReason || "").includes("HTTPS") &&
+    sctx.isReady(settings) === false &&
+    good.disabled === undefined &&
+    sctx.isReady({ ...settings, activeProvider: "gemini" }) === true;
+  console.log(
+    "存量非法 Base URL 标记:",
+    ok
+      ? "PASS"
+      : "FAIL " +
+          JSON.stringify({
+            badDisabled: bad.disabled,
+            reason: bad.disabledReason,
+            goodDisabled: good.disabled,
+          })
+  );
+}
+
+// API Key 存储策略：关闭"记住"时不落盘、只进 session，读取时还原；重新开启后回到 local 并清会话副本
+async function testApiKeyStoragePolicy() {
+  const storage = makeStorageMock();
+  const sctx = {
+    chrome: { storage },
+    console, URL, Promise, JSON, Error, Object, String, Number, Math, Array, Set,
+  };
+  vm.createContext(sctx);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, "common.js"), "utf8"), sctx);
+
+  const base = {
+    activeProvider: "openai",
+    providers: {
+      openai: {
+        type: "openai",
+        baseUrl: "https://api.example.com/v1",
+        apiKey: "SK-SECRET",
+        defaultModel: "m",
+      },
+      gemini: {
+        type: "gemini",
+        baseUrl: "https://generativelanguage.googleapis.com",
+        apiKey: "",
+        defaultModel: "",
+      },
+    },
+  };
+
+  // 关闭"记住"：Key 不落盘（local 中不留明文），只写 session
+  await sctx.saveSettings({ ...base, rememberApiKeys: false });
+  const storedOff = storage.areas.local.settings;
+  const sessionKeys = storage.areas.session.api_keys;
+  const offOk =
+    storedOff.providers.openai.apiKey === "" &&
+    !JSON.stringify(storedOff).includes("SK-SECRET") &&
+    sessionKeys &&
+    sessionKeys.openai === "SK-SECRET";
+
+  // 读取时从 session 还原，调用方无需感知
+  const back = await sctx.getSettings();
+  const hydrateOk = back.providers.openai.apiKey === "SK-SECRET";
+
+  // 重新开启"记住"：Key 回到 local，会话副本清除
+  await sctx.saveSettings({ ...base, rememberApiKeys: true });
+  const storedOn = storage.areas.local.settings;
+  const onOk =
+    storedOn.providers.openai.apiKey === "SK-SECRET" &&
+    storage.areas.session.api_keys === undefined;
+
+  const ok = offOk && hydrateOk && onOk;
+  console.log(
+    "API Key 存储策略:",
+    ok
+      ? "PASS"
+      : "FAIL " +
+          JSON.stringify({
+            offApiKey: storedOff.providers.openai.apiKey,
+            sessionKeys,
+            hydrate: back.providers.openai.apiKey,
+            onApiKey: storedOn.providers.openai.apiKey,
+            sessionAfterOn: storage.areas.session.api_keys,
+          })
+  );
+}
+
+// 凭据迁移：旧版本存在 storage.local 的 ds_token 在首次读取时搬到 session 并删除旧字段
+async function testSecretMigration() {
+  const storage = makeStorageMock({ local: { ds_token: "LEGACY" } });
+  const sctx = {
+    chrome: { storage },
+    console, URL, Promise, JSON, Error, Object, String, Number, Math, Array, Set,
+  };
+  vm.createContext(sctx);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, "common.js"), "utf8"), sctx);
+
+  // secretStore 是 const 声明，只存在于脚本全局词法环境，须从上下文内部取引用
+  const store = vm.runInContext("secretStore", sctx);
+  const v1 = await store.get("ds_token");
+  const v2 = await store.get("ds_token"); // 第二次应直接命中 session
+  const ok =
+    v1 === "LEGACY" &&
+    v2 === "LEGACY" &&
+    storage.areas.session.ds_token === "LEGACY" &&
+    !("ds_token" in storage.areas.local);
+  console.log("凭据迁移 local→session:", ok ? "PASS" : "FAIL " + JSON.stringify(storage.areas));
+}
+
 function testKimiIsReady() {
   const ok = ctx.isReady({
     providers: { kimi: { type: "kimi" } },
@@ -524,19 +845,14 @@ function testKimiIsReady() {
 }
 
 // 构造 kimi.js 的 vm 上下文：mock chrome/storage，fetch 由传入的 handler 决定
+// （kimi.js 通过 common.js 的 secretStore 读写凭据，故两个脚本都要加载）
 function makeKimiCtx(fetchHandler) {
   const kctx = {
     window: {},
     chrome: {
-      storage: {
-        local: {
-          get: async (k) =>
-            k === "kimi_tokens"
-              ? { kimi_tokens: { accessToken: "acc", refreshToken: "ref" } }
-              : {},
-          set: async () => {},
-        },
-      },
+      storage: makeStorageMock({
+        session: { kimi_tokens: { accessToken: "acc", refreshToken: "ref" } },
+      }),
       tabs: {
         create: async () => ({ id: 1 }),
         remove: async () => {},
@@ -547,6 +863,7 @@ function makeKimiCtx(fetchHandler) {
     console,
     fetch: fetchHandler,
     TextDecoder,
+    URL,
     Promise,
     JSON,
     Error,
@@ -558,6 +875,7 @@ function makeKimiCtx(fetchHandler) {
     Set,
   };
   vm.createContext(kctx);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, "common.js"), "utf8"), kctx);
   vm.runInContext(fs.readFileSync(path.join(ROOT, "kimi.js"), "utf8"), kctx);
   return kctx;
 }
@@ -680,4 +998,22 @@ async function testKimiUploadAndRefs() {
   testKimiIsReady();
   await testKimiStream();
   await testKimiUploadAndRefs();
-})();
+  // Phase 1（正确性与安全）新增回归
+  testValidateBaseUrl();
+  await testDisabledLegacyBaseUrl();
+  await testSecretMigration();
+  await testApiKeyStoragePolicy();
+  await testDeepSeekAuthRetry();
+
+  // 任一 FAIL → 非零退出码，CI 依据退出码判定
+  if (failedCount) {
+    rawLog(`\n${failedCount} 项失败`);
+    process.exitCode = 1;
+  } else {
+    rawLog("\n全部通过");
+  }
+})().catch((e) => {
+  // 用例抛异常同样视为失败，避免异常被吞掉后仍以 0 退出
+  rawLog("用例异常中止:", e);
+  process.exitCode = 1;
+});

@@ -13,12 +13,11 @@ window.KIMI = (() => {
   // ---------------- token ----------------
 
   async function getToken() {
-    const { kimi_tokens } = await chrome.storage.local.get("kimi_tokens");
-    return kimi_tokens || null;
+    return (await secretStore.get("kimi_tokens")) || null;
   }
 
   async function saveTokens(tokens) {
-    await chrome.storage.local.set({ kimi_tokens: tokens });
+    await secretStore.set("kimi_tokens", tokens);
   }
 
   function waitTabComplete(tabId, timeoutMs) {

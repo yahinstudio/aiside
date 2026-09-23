@@ -6,12 +6,18 @@
 
 console.log("[AiSIDE] build v5 已加载（快捷键开面板 + 消息重试投递）");
 
+// 共享模块：仅用于 hardenStorageAccess / secretStore（common.js 顶层无副作用，SW 内可安全引入）
+importScripts("common.js");
+
+// 扩展初始化即收紧 storage.local 的访问级别（默认对内容脚本公开）
+hardenStorageAccess();
+
 chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })
   .then(() => console.log("[AiSIDE] openPanelOnActionClick 已启用"))
   .catch((e) => console.error("[AiSIDE] setPanelBehavior 失败:", e));
 
-// webRequest：捕获 DeepSeek 页面请求头中的最新 token
+// webRequest：捕获 DeepSeek 页面请求头中的最新 token（写入 session，不落盘）
 chrome.webRequest.onBeforeSendHeaders.addListener(
   (details) => {
     if (!details.requestHeaders) return;
@@ -21,7 +27,7 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
     if (auth && typeof auth.value === "string" && auth.value.startsWith("Bearer ")) {
       const token = auth.value.slice(7).trim();
       if (token.length > 20) {
-        chrome.storage.local.set({ ds_token: token }).catch(() => {});
+        secretStore.set("ds_token", token).catch(() => {});
       }
     }
   },

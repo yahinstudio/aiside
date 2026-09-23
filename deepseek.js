@@ -16,12 +16,11 @@ window.DEEPSEEK = (() => {
   // ---------------- token ----------------
 
   async function getToken() {
-    const { ds_token } = await chrome.storage.local.get("ds_token");
-    return ds_token || null;
+    return (await secretStore.get("ds_token")) || null;
   }
 
   async function saveToken(token) {
-    await chrome.storage.local.set({ ds_token: token });
+    await secretStore.set("ds_token", token);
   }
 
   function waitTabComplete(tabId, timeoutMs) {
@@ -392,7 +391,9 @@ window.DEEPSEEK = (() => {
 
   // SSE 流式对话：yield 正文文本增量
   async function* sendMessage(sessionId, content, signal) {
-    const token = await ensureToken();
+    // token 必须可更新：401 后刷新得到的新 token 要同时用于重试的 Authorization、
+    // PoW 头（与 token 绑定）以及 finally 中的会话删除
+    let token = await ensureToken();
     let res = null;
     // 401 时换新 token 重试一次（PoW 头与 token 绑定，需重新求解）
     for (let attempt = 0; attempt < 2 && !res; attempt++) {
@@ -418,7 +419,7 @@ window.DEEPSEEK = (() => {
         signal,
       });
       if (tryRes.status === 401 && attempt === 0) {
-        await fetchFreshToken();
+        token = await fetchFreshToken();
         continue;
       }
       if (!tryRes.ok) {

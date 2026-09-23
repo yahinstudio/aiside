@@ -53,6 +53,19 @@ function applyModeVisibility() {
 function collectAndSave() {
   const providers = {};
   for (const key of PROVIDER_KEYS) providers[key] = gatherProvider(key);
+  // Base URL 校验：非法（远端明文 HTTP、协议不符、主机名缺失）时拒绝保存，
+  // 避免把不可用地址写入存储后继续发送请求
+  for (const key of API_KEYS) {
+    const raw = providers[key].baseUrl;
+    if (!raw) continue;
+    try {
+      validateBaseUrl(raw);
+    } catch (e) {
+      setStatus(key, "✗ " + friendlyError(e), "err");
+      showToast("保存失败：Base URL 不合法");
+      return Promise.resolve();
+    }
+  }
   const activeProvider = getSelectedProvider();
   const fontSize = Number($("font-size").value) || 15;
   const prompt = $("prompt").value;
@@ -63,6 +76,7 @@ function collectAndSave() {
     fontFamily: $("font-family-select").value,
     fontWeight: $("font-weight-select").value,
     prompt: prompt.trim() ? prompt.trim() : DEFAULT_PROMPT,
+    rememberApiKeys: $("remember-api-keys").checked,
   };
   return saveSettings(settings).then(() => {
     $("prompt").value = settings.prompt;
@@ -353,6 +367,10 @@ async function init() {
     if (effortEl) effortEl.value = p.reasoningEffort || "";
     const models = await getCachedModels(key);
     fillDatalist(key, models);
+    // 存量 Base URL 校验未通过：明确提示，重新保存且校验通过后自动恢复
+    if (p.disabled) {
+      setStatus(key, "✗ " + (p.disabledReason || "Base URL 不可用") + "；请修改后重新保存", "err");
+    }
   }
   // 由存储的 activeProvider 反推两级选择（网页模式 / 自定义 API + 子选择）
   const webMode = settings.activeProvider === "deepseek" || settings.activeProvider === "kimi";
@@ -385,6 +403,7 @@ async function init() {
   fillFontSelect(fontList && fontList.length ? fontList : detectCommonFonts(), settings.fontFamily);
   $("font-weight-select").value = settings.fontWeight || "";
   $("prompt").value = settings.prompt || DEFAULT_PROMPT;
+  $("remember-api-keys").checked = settings.rememberApiKeys !== false;
 
   // 事件绑定：表单变化即时保存
   for (const key of API_KEYS) {
@@ -424,6 +443,7 @@ async function init() {
   $("font-size").addEventListener("change", collectAndSave);
   $("font-family-select").addEventListener("change", collectAndSave);
   $("font-weight-select").addEventListener("change", collectAndSave);
+  $("remember-api-keys").addEventListener("change", collectAndSave);
   $("scan-fonts").addEventListener("click", onScanFonts);
   $("prompt").addEventListener("change", collectAndSave);
   $("open-shortcuts").addEventListener("click", onOpenShortcuts);

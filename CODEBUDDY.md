@@ -18,7 +18,8 @@ the package is permitted. Changing this changes the install flow, so treat it as
 decision. See `AiSIDE_开发改进实施文档_v1.0.md` §11 for the proposed direction.
 
 - **Run all tests:** `node tools/test_parse.js`
-  - Pure Node, no framework. Outputs `PASS`/`FAIL` per case (~37 cases).
+  - Pure Node, no framework. Outputs `PASS`/`FAIL` per case (~42 cases).
+  - Exits non-zero if any case prints `FAIL` (or a case throws), so CI can gate on the exit code.
   - There is **no single-test filter.** Tests are flat functions invoked by an async IIFE
     at the bottom of the file; to run one, comment out the others in that IIFE.
   - The harness resolves source paths relative to the repo root (`path.resolve(__dirname, "..")`),
@@ -35,7 +36,7 @@ Four HTML/JS surfaces plus shared modules, all loaded as classic scripts (global
 
 | File | Role |
 |---|---|
-| `background.js` | Service worker: opens the panel on action click, handles the `Ctrl+Shift+U` command, and via `webRequest` captures the latest DeepSeek `Authorization: Bearer` header into `storage.local.ds_token`. |
+| `background.js` | Service worker: opens the panel on action click, handles the `Ctrl+Shift+U` command, tightens the `storage.local` access level, and via `webRequest` captures the latest DeepSeek `Authorization: Bearer` header into session storage (through `secretStore`). |
 | `sidepanel.html/js` | The UI and the orchestration of one summarize run. |
 | `options.html/js` | Settings page (`open_in_tab`). |
 | `common.js` | Provider-agnostic core: settings, model list, `streamChat`, page extraction, Bilibili, Markdown rendering. |
@@ -46,6 +47,8 @@ Four HTML/JS surfaces plus shared modules, all loaded as classic scripts (global
 `sidepanel.html` loads `deepseek.js`, `kimi.js`, `common.js`, then `sidepanel.js`.
 `common.js`'s `streamChat` dispatches to `window.DEEPSEEK` / `window.KIMI` and throws a
 "模块未加载" error if they are absent. `options.html` loads the same provider + common scripts.
+`background.js` additionally pulls `common.js` in via `importScripts` (it needs `secretStore`
+and `hardenStorageAccess`); `common.js` has no top-level side effects, so this is safe.
 If you add a shared file, wire it into every HTML that needs it.
 
 ### Provider dispatch
@@ -100,17 +103,29 @@ Rendering is hand-rolled in `common.js` (no library):
   lines) so there is no layout jump when the stream completes. `flushRender` in `sidepanel.js`
   diffs `renderedBlocks` against the DOM to replace only changed blocks.
 
-### Storage (`chrome.storage.local`)
-- `settings` — deep-merged over `DEFAULT_SETTINGS`, so adding a field needs no migration.
-- `models` — per-provider cached model lists.
-- `ds_token` — DeepSeek bearer token (written by `background.js` webRequest and `deepseek.js`).
-- `kimi_tokens` — `{ accessToken, refreshToken }`.
-- `fontList` — scanned system fonts for the options page.
+### Storage
 
-API keys never leave the machine; they are stored only here. Note that `chrome.storage.local`
-is exposed to content scripts (untrusted contexts) **by default**; the extension does not call
-`setAccessLevel` yet, so every injected world in every page can read this data. See the
-hardening doc §4 before adding new secrets here.
+`chrome.storage.local` — access level is tightened to `TRUSTED_CONTEXTS` by
+`hardenStorageAccess()` on every service-worker start (the default exposes it to content scripts):
+- `settings` — deep-merged over `DEFAULT_SETTINGS`, so adding a field needs no migration. A
+  provider whose `baseUrl` fails `validateBaseUrl` is flagged `disabled` on read by `getSettings`
+  (covers legacy remote-HTTP values); `isReady` then treats it as unconfigured until the user
+  re-saves a valid URL.
+- `models` — per-provider cached model lists.
+- `fontList` — scanned system fonts for the options page.
+- API keys — only while `settings.rememberApiKeys` is true (the default, preserving prior
+  behaviour). When it is false, `saveSettings` blanks the keys in `settings` and parks them in
+  `storage.session.api_keys`, and `getSettings` rehydrates them on read. Callers never need to
+  know which side a key came from.
+
+`chrome.storage.session` — credentials, always through `secretStore` in `common.js`:
+- `ds_token` — DeepSeek bearer token.
+- `kimi_tokens` — `{ accessToken, refreshToken }`.
+
+Session storage is cleared on browser restart, so the first summarize afterwards re-captures the
+token via a hidden tab. `secretStore.get` lazily migrates any legacy value still sitting in
+`storage.local` and deletes the old field. **Route new credentials through `secretStore`**, never
+straight to `storage.local`.
 
 ## Conventions
 

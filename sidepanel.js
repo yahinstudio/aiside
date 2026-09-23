@@ -42,6 +42,16 @@ function showError(msg, action) {
   if (btn) btn.addEventListener("click", () => chrome.tabs.create({ url: action.url }));
 }
 
+// 尚未就绪的提示：Base URL 校验未通过的 provider 给出具体原因
+function notReadyMessage(settings) {
+  const p = settings.providers[settings.activeProvider];
+  if (p && p.disabled) {
+    return "当前 API 服务不可用：" + (p.disabledReason || "Base URL 不合法") +
+      "。请在扩展图标上右键 →「选项」，修改后重新保存。";
+  }
+  return "尚未配置 AI 服务：请在扩展图标上右键 →「选项」，填写 API 并选择模型。";
+}
+
 // ---------------- 材料组装 ----------------
 
 function buildUserMessage(page) {
@@ -76,7 +86,7 @@ async function summarize() {
     const settings = await getSettings();
     if (mySeq !== seq) return;
     if (!isReady(settings)) {
-      showEmpty("尚未配置 AI 服务：请在扩展图标上右键 →「选项」，填写 API 并选择模型。");
+      showEmpty(notReadyMessage(settings));
       return;
     }
     provider = settings.providers[settings.activeProvider];
@@ -385,7 +395,7 @@ chrome.tabs.onActivated.addListener(({ tabId }) => {
   await applyFontSize();
   const settings = await getSettings();
   if (!isReady(settings)) {
-    showEmpty("尚未配置 AI 服务：请在扩展图标上右键 →「选项」，填写 API 并选择模型。");
+    showEmpty(notReadyMessage(settings));
     return;
   }
   hasSummarizedOnce = true;

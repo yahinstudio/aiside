@@ -28,7 +28,15 @@ const DEFAULT_SETTINGS = {
   fontFamily: "", // 自定义字体：""=默认字体栈；否则为系统字体名
   fontWeight: "", // 字重：""=默认；300/400/500/600/700
   prompt: DEFAULT_PROMPT,
+  // API Key 是否随设置长期落盘（默认沿用原行为）。关闭后 Key 只存 storage.session，
+  // 关闭浏览器即失效，下次需重新填写。
+  rememberApiKeys: true,
 };
+
+// 需要 API Key 的 provider（账号模式复用网页登录态，无 Key）
+const API_KEY_PROVIDERS = ["openai", "gemini"];
+// 未选择"记住 API Key"时，Key 的会话存储位置
+const API_KEYS_SESSION_KEY = "api_keys";
 
 // 深合并：extra 覆盖 base（嵌套对象逐层合并）
 function deepMerge(base, extra) {
@@ -47,12 +55,91 @@ function deepMerge(base, extra) {
 
 async function getSettings() {
   const { settings } = await chrome.storage.local.get("settings");
-  return deepMerge(DEFAULT_SETTINGS, settings || {});
+  const merged = deepMerge(DEFAULT_SETTINGS, settings || {});
+  // 未选择"记住 API Key"：Key 只在会话里，读回以便调用
+  if (merged.rememberApiKeys === false) {
+    const s = await chrome.storage.session.get(API_KEYS_SESSION_KEY);
+    const keys = (s && s[API_KEYS_SESSION_KEY]) || {};
+    for (const name of API_KEY_PROVIDERS) {
+      if (merged.providers[name]) merged.providers[name].apiKey = keys[name] || "";
+    }
+  }
+  // 存量设置迁移：历史版本可能存有远端明文 HTTP 的 Base URL。此类接口不再允许调用，
+  // 在读取时标记为 disabled 以阻止继续发送请求；用户在设置页重新保存并通过校验后自动恢复。
+  for (const p of Object.values(merged.providers)) {
+    if (!p || (p.type !== "openai" && p.type !== "gemini") || !p.baseUrl) continue;
+    try {
+      validateBaseUrl(p.baseUrl);
+    } catch (e) {
+      p.disabled = true;
+      p.disabledReason = friendlyError(e);
+    }
+  }
+  return merged;
 }
 
+// 保存设置。API Key 的落盘位置由 rememberApiKeys 决定：
+//   true  → 随 settings 存在 storage.local（沿用原行为，重启后仍在）
+//   false → 从 settings 中抹去，只存 storage.session（不落盘）
 async function saveSettings(settings) {
-  await chrome.storage.local.set({ settings });
+  const remember = settings.rememberApiKeys !== false;
+  const providers = { ...settings.providers };
+  const keys = {};
+  for (const name of API_KEY_PROVIDERS) {
+    if (providers[name]) keys[name] = providers[name].apiKey || "";
+  }
+  let toStore = settings;
+  if (!remember) {
+    const stripped = {};
+    for (const name of API_KEY_PROVIDERS) {
+      if (providers[name]) stripped[name] = { ...providers[name], apiKey: "" };
+    }
+    toStore = { ...settings, providers: { ...providers, ...stripped } };
+  }
+  await chrome.storage.local.set({ settings: toStore });
+  if (remember) {
+    await chrome.storage.session.remove(API_KEYS_SESSION_KEY);
+  } else {
+    await chrome.storage.session.set({ [API_KEYS_SESSION_KEY]: keys });
+  }
 }
+
+// ---------------- 凭据存储 ----------------
+
+// 收紧 storage.local 的访问级别：local/sync/managed 默认向内容脚本（不受信任上下文）公开，
+// session 默认不公开。显式限制为仅扩展自身上下文，缩小未来注入或误读 storage 的影响面。
+// 该设置一旦写入即持久生效，可重复调用。
+async function hardenStorageAccess() {
+  try {
+    await chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
+  } catch (e) {
+    console.warn("[AiSIDE] storage.local setAccessLevel 失败:", e);
+  }
+}
+
+// 凭据统一入口：写入固定走 storage.session（浏览器会话内有效，随浏览器重启清空），
+// 不再长期落盘。读取时会话缺失则从 local 惰性迁移一次（兼容旧版本已保存的凭据），
+// 迁移成功后删除 local 中的旧字段。
+const secretStore = {
+  async get(key) {
+    const s = await chrome.storage.session.get(key);
+    if (s && s[key] !== undefined) return s[key];
+    const l = await chrome.storage.local.get(key);
+    if (l && l[key] !== undefined) {
+      await chrome.storage.session.set({ [key]: l[key] });
+      await chrome.storage.local.remove(key);
+      return l[key];
+    }
+    return undefined;
+  },
+  async set(key, value) {
+    await chrome.storage.session.set({ [key]: value });
+  },
+  async remove(key) {
+    await chrome.storage.session.remove(key);
+    await chrome.storage.local.remove(key);
+  },
+};
 
 // ---------------- 模型列表缓存 ----------------
 
@@ -74,6 +161,30 @@ class ApiError extends Error {}
 
 function joinUrl(base, path) {
   return String(base).replace(/\/+$/, "") + path;
+}
+
+// Base URL 校验：远端必须 HTTPS；仅 loopback 允许明文 HTTP。
+// 注意 URL.hostname 对 IPv6 返回带方括号的形式（如 "[::1]"），不能与 "::1" 直接比较。
+function validateBaseUrl(input) {
+  let url;
+  try {
+    url = new URL(String(input || "").trim());
+  } catch (_) {
+    throw new ApiError("Base URL 格式不正确，请填写完整地址（如 https://api.example.com/v1）");
+  }
+  if (!url.hostname) {
+    throw new ApiError("Base URL 缺少有效的主机名");
+  }
+  if (url.protocol === "https:") return url;
+  const isLoopback =
+    url.hostname === "localhost" ||
+    url.hostname === "127.0.0.1" ||
+    url.hostname === "[::1]";
+  if (url.protocol === "http:" && isLoopback) return url;
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new ApiError("Base URL 仅支持 http/https 协议，当前为 " + url.protocol);
+  }
+  throw new ApiError("Base URL 必须使用 HTTPS；仅 localhost / 127.0.0.1 / [::1] 允许明文 HTTP");
 }
 
 function openaiHeaders(p) {
@@ -112,6 +223,8 @@ function isReady(settings) {
   if (!p) return false;
   // 账号模式复用网页登录态，无需 Key / 模型
   if (p.type === "deepseek" || p.type === "kimi") return true;
+  // 存量 Base URL 校验未通过（如远端明文 HTTP）：视为未配置
+  if (p.disabled) return false;
   return !!(p.apiKey && p.defaultModel);
 }
 

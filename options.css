@@ -182,6 +182,22 @@ main {
   margin-bottom: 6px;
 }
 
+/* 复选行：勾选框与文字同一行，字重比普通字段标题轻 */
+.field > label.check-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.field > label.check-line input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
 .field input[type="text"],
 .field input[type="password"],
 .field textarea {
