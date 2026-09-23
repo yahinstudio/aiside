@@ -1,0 +1,310 @@
+/* AiSIDE 侧边栏样式：仅总结文字区 */
+
+:root {
+  --sum-font-size: 15px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--sum-font-family, -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif);
+  font-size: var(--sum-font-size);
+  font-weight: var(--sum-font-weight, normal);
+  line-height: 1.65;
+  color: #1f2328;
+  background: #ffffff;
+  word-break: break-word;
+}
+
+.content {
+  padding: 16px 18px 24px;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* 空态 / 加载 / 错误 */
+.empty {
+  color: #9ca3af;
+  margin: auto;
+  text-align: center;
+  padding: 24px;
+}
+
+.loading-center {
+  margin: auto;
+  text-align: center;
+  padding: 24px;
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  margin: 0 auto 12px;
+  border: 3px solid #dbeafe;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.loading-title {
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 4px;
+}
+
+.loading-detail {
+  font-size: 0.9em;
+  color: #9ca3af;
+}
+
+.error {
+  padding: 12px 14px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  font-size: 0.95em;
+}
+
+.error-title {
+  font-weight: 700;
+  color: #b91c1c;
+  margin-bottom: 4px;
+}
+
+.error-msg {
+  color: #7f1d1d;
+}
+
+.error-action {
+  margin-top: 10px;
+  padding: 6px 14px;
+  border: none;
+  border-radius: 8px;
+  background: #b91c1c;
+  color: #fff;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+
+.error-action:hover {
+  background: #991b1b;
+}
+
+/* 轻量 Markdown 渲染 */
+.md-h {
+  font-weight: 800;
+  color: #111827;
+  line-height: 1.35;
+  margin: 18px 0 14px;
+}
+
+/* 一级标题：更大更重，标题下方一条细线 */
+.md-h1 {
+  font-size: 1.8em;
+  margin-top: 22px;
+  border-bottom: 1px solid #ececec;
+  padding-bottom: 8px;
+}
+
+.md-h2 {
+  font-size: 1.5em;
+  margin-top: 20px;
+}
+
+.md-h3 {
+  font-size: 1.32em;
+}
+
+.md-h4 {
+  font-size: 1.18em;
+  font-weight: 700;
+}
+
+.md-h5 {
+  font-size: 1.1em;
+  font-weight: 700;
+}
+
+.md-h6 {
+  font-size: 1.05em;
+  font-weight: 700;
+}
+
+/* --- / *** 分隔符：显示为一条细横线 */
+.md-hr {
+  margin: 12px 0;
+  border-top: 1px solid #dcdcdc;
+}
+
+/* 切换标签页后的"总结当前网页"按钮 */
+.summarize-cta {
+  margin: auto;
+  text-align: center;
+  padding: 24px;
+}
+
+.cta-btn {
+  padding: 10px 28px;
+  border: none;
+  border-radius: 10px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 1.05em;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cta-btn:hover {
+  background: #1d4ed8;
+}
+
+.md-code-wrap {
+  margin: 8px 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.md-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  background: #fff;
+  border-bottom: 1px solid #f0f0f0;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.88em;
+  color: #374151;
+}
+
+.md-code-copy {
+  border: none;
+  background: none;
+  color: #6b7280;
+  font-size: 0.95em;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.md-code-copy:hover {
+  background: #f0f0f0;
+  color: #111827;
+}
+
+.md-pre {
+  margin: 0;
+  padding: 10px 0;
+  overflow-x: auto;
+  background: #fff;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.92em;
+  line-height: 1.5;
+}
+
+.md-pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.md-pre .ln {
+  display: block;
+  padding: 0 10px; /* 与表格单元格文字左边缘对齐 */
+  white-space: pre;
+}
+
+.md-pre em {
+  display: inline-block;
+  width: 1.4em;
+  margin-right: 22px; /* 行号与代码文本之间的横向间距 */
+  text-align: right;
+  color: #9ca3af;
+  font-style: normal;
+  user-select: none;
+}
+
+.md-para {
+  margin: 8px 0;
+}
+
+/* 列表项之间增加垂直间距（flex 下相邻 margin 相加，条目间 8px）；行内行距不变 */
+.md-li {
+  padding-left: 6px;
+  margin: 4px 0 0;
+}
+
+.md-li + .md-li {
+  margin-top: 8px;
+}
+
+.md-quote {
+  border-left: 3px solid #d1d5db;
+  padding-left: 10px;
+  color: #1f2328;
+  margin: 8px 0;
+}
+
+.md-table-wrap {
+  margin: 8px 0;
+  overflow-x: auto;
+  border: 1px solid #e8e8e8;
+  border-radius: 10px;
+}
+
+.md-table {
+  border-collapse: collapse;
+  width: auto;
+  min-width: 100%;
+  font-size: 0.8em;
+}
+
+.md-table th,
+.md-table td {
+  border: none;
+  border-bottom: 1px solid #ededed;
+  padding: 6px 8px 6px 20px;
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap; /* 不压缩列宽：内容过宽时由外层横向滚动 */
+}
+
+.md-table th {
+  font-weight: 600;
+  background: none;
+}
+
+.md-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+code {
+  background: #ffffff; /* 与页面底色一致 */
+  border: none;
+  padding: 0;
+  color: #111827;
+  font-size: 0.92em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+}
+
+/* 流式临时渲染容器：display:contents 让内部块直接参与 .content 的 flex 布局，
+   与安全块的相邻选择器（如 .md-li + .md-li）和间距行为保持一致 */
+#stream-prov {
+  display: contents;
+}

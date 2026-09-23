@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>AiSIDE 设置</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <header class="page-head">
+    <div class="title-row">
+      <img class="logo" src="icons/icon128.png" alt="AiSIDE">
+      <h1>AiSIDE 设置</h1>
+    </div>
+    <p class="sub">选择使用的 API 并配置模型；配置完成后点击扩展图标或按快捷键即可总结当前网页。</p>
+  </header>
+
+  <main>
+    <div class="cards-row">
+      <div class="col">
+      <!-- 网页模式 -->
+      <section class="card" id="card-web">
+        <div class="card-head">
+          <label class="mode-option">
+            <input type="radio" name="api-mode" value="web" id="radio-web">
+            <span class="radio-text"><strong>网页模式</strong></span>
+          </label>
+        </div>
+
+        <div class="field">
+          <label>服务</label>
+          <div class="btn-row">
+            <label class="radio-line">
+              <input type="radio" name="web-provider" value="deepseek" id="web-deepseek">
+              <span class="radio-text">DeepSeek</span>
+            </label>
+            <label class="radio-line">
+              <input type="radio" name="web-provider" value="kimi" id="web-kimi">
+              <span class="radio-text">Kimi</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>账号登录状态</label>
+          <p class="hint">
+            当前状态：<strong id="web-login-status">未检测</strong>
+          </p>
+          <div class="btn-row">
+            <button type="button" class="btn" id="check-web-login">检测登录</button>
+          </div>
+          <div class="status" id="status-web"></div>
+        </div>
+      </section>
+
+      <!-- 总结提示词 -->
+      <section class="card" id="card-prompt">
+        <h2>总结提示词</h2>
+        <div class="field">
+          <textarea id="prompt" rows="7"
+            placeholder="请返回您反复阅读正文后精心写成的详尽笔记"></textarea>
+          <p class="hint">留空则使用默认提示词。</p>
+        </div>
+      </section>
+      </div>
+
+      <div class="col">
+      <!-- 自定义 API -->
+      <section class="card" id="card-custom">
+        <div class="card-head">
+          <label class="mode-option">
+            <input type="radio" name="api-mode" value="custom" id="radio-custom">
+            <span class="radio-text"><strong>自定义 API</strong></span>
+          </label>
+        </div>
+
+        <div class="field">
+          <label>接口类型</label>
+          <div class="btn-row">
+            <label class="radio-line">
+              <input type="radio" name="custom-provider" value="openai" id="custom-openai">
+              <span class="radio-text">OpenAI 兼容</span>
+            </label>
+            <label class="radio-line">
+              <input type="radio" name="custom-provider" value="gemini" id="custom-gemini">
+              <span class="radio-text">Google Gemini</span>
+            </label>
+          </div>
+        </div>
+
+      <!-- OpenAI 兼容字段 -->
+      <div id="custom-openai-fields">
+        <div class="field">
+          <label for="openai-base-url">Base URL</label>
+          <input type="text" id="openai-base-url" placeholder="https://api.openai.com/v1" spellcheck="false">
+        </div>
+
+        <div class="field">
+          <label for="openai-api-key">API Key</label>
+          <div class="key-row">
+            <input type="password" id="openai-api-key" placeholder="sk-..." autocomplete="off" spellcheck="false">
+            <button type="button" class="btn secondary small" data-toggle-key="openai">显示</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>默认模型</label>
+          <div class="model-row">
+            <select id="openai-model-select">
+              <option value="">-- 请先获取模型 --</option>
+            </select>
+            <button type="button" class="btn secondary small" data-custom-model="openai">自定义</button>
+          </div>
+          <input type="text" id="openai-model" style="display:none" placeholder="手动输入模型名" spellcheck="false">
+          <datalist id="models-openai"></datalist>
+          <p class="model-count" id="openai-model-count"></p>
+        </div>
+
+        <div class="field">
+          <label for="openai-reasoning-effort">思考模式</label>
+          <select id="openai-reasoning-effort">
+            <option value="">跟随服务端默认（不传参数）</option>
+            <option value="disabled">关闭思考（最快，需模型支持）</option>
+            <option value="low">low — 轻量思考</option>
+            <option value="high">high — 增强思考</option>
+            <option value="max">max — 深度思考（最慢）</option>
+          </select>
+        </div>
+
+        <div class="btn-row">
+          <button type="button" class="btn" id="fetch-openai">获取模型</button>
+          <button type="button" class="btn secondary" id="test-openai">测试连接</button>
+        </div>
+        <div class="status" id="status-openai"></div>
+      </div>
+
+      <!-- Gemini 字段 -->
+      <div id="custom-gemini-fields" style="display:none">
+        <div class="field">
+          <label for="gemini-base-url">Base URL</label>
+          <input type="text" id="gemini-base-url" placeholder="https://generativelanguage.googleapis.com" spellcheck="false">
+        </div>
+
+        <div class="field">
+          <label for="gemini-api-key">API Key</label>
+          <div class="key-row">
+            <input type="password" id="gemini-api-key" placeholder="AIza..." autocomplete="off" spellcheck="false">
+            <button type="button" class="btn secondary small" data-toggle-key="gemini">显示</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>默认模型</label>
+          <div class="model-row">
+            <select id="gemini-model-select">
+              <option value="">-- 请先获取模型 --</option>
+            </select>
+            <button type="button" class="btn secondary small" data-custom-model="gemini">自定义</button>
+          </div>
+          <input type="text" id="gemini-model" style="display:none" placeholder="手动输入模型名" spellcheck="false">
+          <datalist id="models-gemini"></datalist>
+          <p class="model-count" id="gemini-model-count"></p>
+        </div>
+
+        <div class="field">
+          <label for="gemini-reasoning-effort">思考模式</label>
+          <select id="gemini-reasoning-effort">
+            <option value="">跟随服务端默认（不传参数）</option>
+            <option value="disabled">关闭思考（最快，仅部分模型支持）</option>
+            <option value="low">low — 轻量思考</option>
+            <option value="high">high — 增强思考</option>
+            <option value="max">max — 深度思考（最慢）</option>
+          </select>
+          <p class="hint">映射为 Gemini 的思考预算：关闭=0、low=1024、high=16384、max=24576 tokens。部分模型（如 Gemini 2.5 Pro）不支持关闭思考。</p>
+        </div>
+
+        <div class="btn-row">
+          <button type="button" class="btn" id="fetch-gemini">获取模型</button>
+          <button type="button" class="btn secondary" id="test-gemini">测试连接</button>
+        </div>
+        <div class="status" id="status-gemini"></div>
+      </div>
+    </section>
+      </div>
+    </div>
+
+    <!-- 通用设置 -->
+    <section class="card">
+      <h2>通用</h2>
+
+      <div class="field">
+        <label for="font-size">总结文字大小：<span id="font-size-label">15px</span></label>
+        <input type="range" id="font-size" min="12" max="20" step="1">
+      </div>
+
+      <div class="field">
+        <label for="font-family-select">总结文字字体</label>
+        <div class="model-row">
+          <select id="font-family-select">
+            <option value="">默认字体（系统栈）</option>
+          </select>
+          <button type="button" class="btn secondary small" id="scan-fonts">扫描系统字体</button>
+        </div>
+        <p class="hint">仅影响侧边栏总结文字；代码块保持等宽字体。未扫描时显示常见字体，点击「扫描系统字体」并授权后可列出电脑内全部字体。</p>
+      </div>
+
+      <div class="field">
+        <label for="font-weight-select">总结文字粗细</label>
+        <select id="font-weight-select">
+          <option value="">默认</option>
+          <option value="300">细体（Light 300）</option>
+          <option value="400">常规（Regular 400）</option>
+          <option value="500">中等（Medium 500）</option>
+          <option value="600">半粗（SemiBold 600）</option>
+          <option value="700">粗体（Bold 700）</option>
+        </select>
+        <p class="hint">实际效果取决于所选字体是否提供对应字重。</p>
+      </div>
+
+      <div class="field">
+        <button type="button" class="btn secondary" id="open-shortcuts">设置快捷键</button>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast">设置已保存</div>
+
+  <script src="deepseek.js"></script>
+  <script src="kimi.js"></script>
+  <script src="common.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

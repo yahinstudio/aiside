@@ -1,0 +1,316 @@
+/* AiSIDE 设置页样式 */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  font-size: 14px;
+  color: #1f2328;
+  background: #f6f7f9;
+  line-height: 1.6;
+}
+
+.page-head {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 28px 24px 8px;
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.title-row .logo {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.18);
+}
+
+.page-head h1 {
+  margin: 0 0 4px;
+  font-size: 24px;
+}
+
+.page-head .sub {
+  margin: 0;
+  color: #6b7280;
+}
+
+main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 8px 24px 48px;
+}
+
+.card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 20px 22px;
+  margin-top: 20px;
+}
+
+.card h2 {
+  margin: 0 0 4px;
+  font-size: 17px;
+}
+
+/* 每个卡片标题下的分割线 */
+.card h2,
+.card-head {
+  padding-bottom: 10px;
+  border-bottom: 1px solid #ececec;
+  margin-bottom: 16px;
+}
+
+.card-head .hint {
+  margin-top: 8px;
+}
+
+/* 块状单选：隐藏原生圆点，用矩形块表示，选中高亮 */
+.radio-line {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #d0d3d9;
+  border-radius: 8px;
+  padding: 7px 16px;
+  background: #ffffff;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.radio-line input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.radio-line:hover {
+  border-color: #93b4f8;
+}
+
+.radio-line:has(input:checked) {
+  border-color: #2563eb;
+  background: #eef4ff;
+}
+
+.radio-line:has(input:checked) .radio-text {
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+/* 顶层两张模式卡片：左右并排；左列（网页模式+提示词）与右列（自定义 API）底部对齐 */
+.cards-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: stretch;
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+}
+
+.col .card {
+  margin-top: 20px;
+}
+
+/* 提示词卡片撑满左列剩余高度，使两列底部对齐 */
+#card-prompt {
+  flex: 1;
+}
+
+#card-prompt textarea {
+  min-height: 120px;
+}
+
+/* 当前选中的模式卡片：边框高亮 */
+.cards-row .card:has(.card-head input:checked) {
+  border-color: #2563eb;
+}
+
+/* 卡片头部的模式单选框 */
+.mode-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.mode-option input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #2563eb;
+  cursor: pointer;
+}
+
+.mode-option .radio-text {
+  font-size: 17px;
+}
+
+/* 子级服务/接口选项：块状单选（放大版） */
+.btn-row .radio-line {
+  padding: 12px 28px;
+}
+
+.btn-row .radio-text {
+  font-size: 16px;
+}
+
+.hint {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.field {
+  margin-top: 16px;
+}
+
+.field > label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.field input[type="text"],
+.field input[type="password"],
+.field textarea {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+  outline: none;
+}
+
+.field textarea {
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.6;
+}
+
+.field input[type="text"]:focus,
+.field input[type="password"]:focus,
+.field textarea:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.key-row {
+  display: flex;
+  gap: 8px;
+}
+
+.key-row input {
+  flex: 1;
+}
+
+.model-count {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+/* 模型下拉 + 自定义按钮 */
+.model-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.model-row select {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 0.95em;
+  background: #fff;
+  color: #1f2328;
+}
+
+.model-row .btn {
+  white-space: nowrap;
+}
+
+.btn-row {
+  margin-top: 16px;
+  display: flex;
+  gap: 10px;
+}
+
+.btn {
+  padding: 9px 18px;
+  border: none;
+  border-radius: 8px;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn:hover {
+  background: #1d4ed8;
+}
+
+.btn.secondary {
+  background: #ffffff;
+  color: #1f2328;
+  border: 1px solid #d1d5db;
+}
+
+.btn.secondary:hover {
+  background: #f3f4f6;
+}
+
+.btn.small {
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.status {
+  margin-top: 12px;
+  font-size: 13px;
+  color: #4b5563;
+  min-height: 1.4em;
+  white-space: pre-wrap;
+}
+
+.status-ok {
+  color: #15803d;
+}
+
+.status-err {
+  color: #b91c1c;
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%) translateY(12px);
+  background: #111827;
+  color: #ffffff;
+  padding: 8px 18px;
+  border-radius: 20px;
+  font-size: 13px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}

@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "AiSIDE 侧边栏 AI 总结",
+  "version": "1.8.3",
+  "description": "在侧边栏一键用 AI 总结当前网页内容，支持 DeepSeek 与 Kimi 网页版账号模式（无需 API Key）、OpenAI 兼容与 Gemini API，以及 B 站视频页总结",
+  "minimum_chrome_version": "114",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "总结当前网页"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "activeTab",
+    "scripting",
+    "commands",
+    "tabs",
+    "webRequest"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "commands": {
+    "summarize-page": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+U"
+      },
+      "description": "总结当前网页"
+    }
+  }
+}
