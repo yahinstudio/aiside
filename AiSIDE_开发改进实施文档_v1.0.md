@@ -534,10 +534,10 @@ DeepSeek 与 Kimi 的服务端留存行为并不完全一致，建议在 Options
 | 阶段 | 任务 | 完成条件 |
 | --- | --- | --- |
 | Phase 1 — Correctness & Security ✅ 2026-09-23 | DeepSeek 401、Base URL HTTPS、storage access level、敏感日志清理 | 核心认证回归测试全部通过；远端 HTTP 被拒绝 |
-| Phase 2 — Permissions & Kimi Boundary | host permissions、optional permission、Kimi hidden DOM/href/size limit | 默认权限明显收窄；Kimi 安全用例通过 |
-| Phase 3 — Reliability | same-tab stale、统一 SSE、硬 timeout | 网络/导航边界测试通过 |
-| Phase 4 — Architecture & CI | ES modules、Provider interface、node:test、GitHub Actions（第一版只跑 `node --test`，build 相关随后挂接） | main/PR 自动 test+build；不再依赖 script load order |
-| Phase 5 — Governance | LICENSE、SECURITY、CHANGELOG、README/CODEBUDDY 同步 | 发布文档与实际代码行为一致 |
+| Phase 2 — Permissions & Kimi Boundary ✅ 2026-09-23 | host permissions、optional permission、Kimi hidden DOM/href/size limit | 默认权限明显收窄；Kimi 安全用例通过 |
+| Phase 3 — Reliability ✅ 2026-09-23 | same-tab stale、统一 SSE、硬 timeout | 网络/导航边界测试通过 |
+| Phase 4 — Architecture & CI ✅ 2026-09-23 | ES modules、Provider interface、node:test、GitHub Actions（第一版只跑 `node --test`，build 相关随后挂接） | main/PR 自动 test+build；不再依赖 script load order |
+| Phase 5 — Governance ✅ 2026-09-23 | LICENSE、SECURITY、CHANGELOG、README/CODEBUDDY 同步 | 发布文档与实际代码行为一致 |
 
 > **Phase 1 落地说明（与上表的差异）：**
 > - §4.2 的「记住 API Key」开关**已实现**。默认值取 `true`（沿用原行为），避免存量用户升级后 API Key 丢失造成静默回归；关闭后 Key 只存 `storage.session`，重启浏览器即失效。
@@ -545,40 +545,46 @@ DeepSeek 与 Kimi 的服务端留存行为并不完全一致，建议在 Options
 > - §6.3 的存量 Base URL 迁移采用「读取时判定」而非持久化 `disabled` 标记，避免留下无法清除的脏状态。
 > - 测试仍为 `tools/test_parse.js`（未迁移 node:test），已满足 Phase 1 所需：任一失败或异常均返回非零退出码，并新增 5 组 Phase 1 回归用例。
 
+> **Phase 2–5 落地说明（与上表的差异）：**
+> - **§5 的 activeTab 例外已按最保守方式处理。** 收窄后，在侧边栏内点「总结当前网页」拿不到 activeTab，注入会被拒；面板会识别该错误并提供「授权访问网站并重试」，而不是让用户看到原始报错。
+> - **Kimi 预签名上传按「降级为内联文本」处理。** 未采用 optional 全站授权（会部分抵消收窄效果）。附件超限或上传被拒时退回正文文本，并在结果上方说明原因。
+> - **Phase 4 未引入 ES modules 与打包**，也未把测试迁到 node:test（两项均为既定决策）。因此 ARCH-001 只落地为「共享模块 + 非正式 Provider 契约说明」，§11.2 的 `src/` 目录重组与 §11.3 的 class 抽象**未实施**；`script load order` 仍是既有约束。
+> - Phase 4 实际交付的是：SSE 读取与超时统一到 `common.js` 共享实现，以及不依赖 `package.json` 的 GitHub Actions（语法检查 + manifest 校验 + 单元测试，已在本仓库跑通）。
+
 # 16. 建议 Issue 拆分
 
 | ID | 标题 | 优先级 | 状态 |
 | --- | --- | --- | --- |
 | SEC-001 | Harden extension secret storage and storage access level | P1 | ✅ Phase 1 |
 | AUTH-001 | Fix DeepSeek stream retry to use refreshed token | P0/P1 | ✅ Phase 1 |
-| PERM-001 | Replace broad host permissions with activeTab + optional origins | P1 | Phase 2 |
+| PERM-001 | Replace broad host permissions with activeTab + optional origins | P1 | ✅ Phase 2 |
 | SEC-002 | Validate custom API Base URL and block remote HTTP | P1 | ✅ Phase 1 |
-| KIMI-001 | Filter hidden DOM before Kimi attachment serialization | P1 | Phase 2 |
-| KIMI-002 | Remove/sanitize href and cap attachment byte size | P1 | Phase 2 |
-| UI-001 | Mark summary stale when active tab URL changes | P2 | Phase 3 |
-| CORE-001 | Extract shared SSE reader with EOF flush | P2 | Phase 3 |
-| CORE-002 | Add hard request/stream timeouts | P2 | Phase 3 |
-| ARCH-001 | Introduce ES modules and provider contract | P2 | Phase 4 |
-| TEST-001 | Migrate tests to node:test and add regression suites | P2 | Phase 4（Phase 1 已完成其中的非零退出码与回归用例） |
-| CI-001 | Add GitHub Actions test/build/manifest checks | P2 | Phase 4 |
-| DOC-001 | Add LICENSE/SECURITY/CHANGELOG and sync docs | P3 | Phase 5 |
+| KIMI-001 | Filter hidden DOM before Kimi attachment serialization | P1 | ✅ Phase 2 |
+| KIMI-002 | Remove/sanitize href and cap attachment byte size | P1 | ✅ Phase 2 |
+| UI-001 | Mark summary stale when active tab URL changes | P2 | ✅ Phase 3 |
+| CORE-001 | Extract shared SSE reader with EOF flush | P2 | ✅ Phase 3 |
+| CORE-002 | Add hard request/stream timeouts | P2 | ✅ Phase 3 |
+| ARCH-001 | Introduce ES modules and provider contract | P2 | ⏸ 本轮不实施（决策：不引入打包，见 §11 执行建议） |
+| TEST-001 | Migrate tests to node:test and add regression suites | P2 | ⏸ 不迁移（决策：现有 harness 已满足退出码门控；回归用例已补齐） |
+| CI-001 | Add GitHub Actions test/build/manifest checks | P2 | ✅ Phase 4 |
+| DOC-001 | Add LICENSE/SECURITY/CHANGELOG and sync docs | P3 | ✅ Phase 5 |
 
 # 17. Definition of Done（本轮整体验收）
 
-> **进度：** Phase 1（Correctness & Security）已于 2026-09-23 完成，下方已勾选项即其覆盖范围；
-> 其余各项归属 Phase 2–5，尚未开始。
+> **进度：** Phase 1–5 已于 2026-09-23 全部完成，下列各项均已达成。
+> 唯一未按原计划实施的是 ARCH-001（ES modules / Provider class），属既定决策，见 §15 落地说明。
 
 - [x] DeepSeek token 过期后可以通过真实 adapter 测试验证刷新与重试。
 - [x] 敏感 token 不再默认长期存入可广泛访问的 local storage。
-- [ ] manifest 不再默认请求所有 HTTP/HTTPS host。
+- [x] manifest 不再默认请求所有 HTTP/HTTPS host。
 - [x] 自定义远端 Base URL 强制 HTTPS；本机 loopback HTTP 明确例外。
-- [ ] Kimi 上传前过滤隐藏内容、处理 href、限制附件字节数，并有 fallback。
-- [ ] 当前页面 URL 变化后旧 summary 不再看起来像新页面结果。
-- [ ] 所有 Provider 使用共享且经过 EOF/abort 测试的 SSE 基础层，或有等价覆盖。
-- [ ] 长连接有真正可触发的 timeout。
-- [ ] 测试失败返回非零 exit code；PR 和 main 上 CI 自动执行。**（部分完成：**非零退出码已落地并验证；GitHub Actions 属 Phase 4，尚未开始。**）**
-- [ ] README / SECURITY / Provider 隐私提示与代码实际行为一致。
-- [ ] 构建产物完全随扩展包分发，不依赖任何远程托管代码。
+- [x] Kimi 上传前过滤隐藏内容、处理 href、限制附件字节数，并有 fallback。
+- [x] 当前页面 URL 变化后旧 summary 不再看起来像新页面结果。
+- [x] 所有 Provider 使用共享且经过 EOF/abort 测试的 SSE 基础层，或有等价覆盖。
+- [x] 长连接有真正可触发的 timeout。
+- [x] 测试失败返回非零 exit code；PR 和 main 上 CI 自动执行。
+- [x] README / SECURITY / Provider 隐私提示与代码实际行为一致。
+- [x] 构建产物完全随扩展包分发，不依赖任何远程托管代码。
 
 # 18. 本轮明确不做
 
@@ -588,6 +594,9 @@ DeepSeek 与 Kimi 的服务端留存行为并不完全一致，建议在 Options
 - 不新增 AI Provider 或模型功能。
 - 不承诺 DeepSeek/Kimi 非公开网页 API 的长期稳定性；只改善适配层可维护性和失败处理。
 - 不把网页 prompt injection 描述成可以完全解决的问题；本轮目标是减少隐藏内容与信任边界混淆。
+- 不引入 ES modules 或打包步骤，保持「克隆后直接加载解压目录」；Provider 只做非正式契约说明，不做 class 抽象。
+- 不把测试迁移到 node:test：现有 harness 已满足失败即非零退出码的门控要求。
+- 不为 Kimi 的预签名上传目标申请可选全站权限：附件不可用时降级为内联文本并说明原因。
 
 # 19. 参考链接
 

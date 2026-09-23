@@ -22,7 +22,15 @@
 3. 打开右上角「开发者模式」
 4. 点击「加载已解压的扩展程序」，选择克隆或解压后的 AiSIDE 文件夹
 
-> 如需总结 `file://` 本地页面：在扩展详情页打开「允许访问文件网址」开关。
+> 如需总结 `file://` 本地页面：在扩展详情页打开「允许访问文件网址」开关。请注意，开启后本地文件内容同样会发送给所选的 AI 服务。
+
+### 关于权限
+
+扩展不再预授权所有网站，只在 `host_permissions` 里声明固定服务域名（DeepSeek、Kimi、B 站接口与字幕）。
+
+- 点击扩展图标或按快捷键触发时，Chrome 会临时授权当前标签页，直接可用。
+- **在侧边栏内点「总结当前网页」（例如刚切换过标签页）不会自动获得该授权**，此时面板会提示并给出「授权访问网站并重试」按钮。
+- 自定义 API 的域名在保存 Base URL 时按 origin 单独申请授权。
 
 ## 配置
 
@@ -35,9 +43,15 @@
   3. 点击「测试连接」验证接口与模型是否可用
   4. 「思考模式」控制思考开销（默认不发送参数，跟随服务端默认）：OpenAI 兼容按服务商语义传参（如智谱 GLM-5.3 强制思考只能选 low）；Gemini 映射为思考预算：关闭=0、low=1024、high=16384、max=24576 tokens
 - 按需调整总结提示词、字体（可扫描系统字体）与文字大小
+- **「记住 API Key」**：默认开启，API Key 存本机 `chrome.storage.local`；关闭后只存浏览器内存会话，关闭浏览器即失效，下次需重新填写
 
-> API Key 仅保存在本机浏览器的 `chrome.storage.local` 中，不会上传到任何服务器。
-> DeepSeek 账号模式复用 chat.deepseek.com 网页版登录态（仅读取本机 localStorage 的 userToken，不接触密码），对话前会完成一次网页版同款 PoW 挑战（纯 JS 求解，约 1 秒，不影响使用）；接口属个人自动化用法，可能随网页版改版而失效（含风控），请勿用于高并发或上传至 Chrome 商店。
+> **凭据存放：** API Key 与 DeepSeek/Kimi 登录态只存在本机浏览器、不会上传到任何服务器，且 `chrome.storage.local` 已限制为仅扩展自身可读（网页脚本读不到）。DeepSeek / Kimi 的 token 存于 `chrome.storage.session`，关闭浏览器即清除，下次使用重新读取。
+>
+> **内容会发往 AI 服务：** 触发总结即表示把当前页面发送给你选择的 Provider——Kimi 文件模式下发送的是清洗后的页面 HTML 附件（剔除隐藏节点、链接去掉 query/hash，上限 2MB，超限或上传被拒时退回正文文本）；`file://` 本地页面内容同样会被外发。涉及隐私或内网内容请自行判断。
+>
+> **网页模式依赖非公开接口：** DeepSeek 账号模式复用 chat.deepseek.com 网页版登录态（仅读取本机登录凭据，不接触密码），对话前会完成一次网页版同款 PoW 挑战（纯 JS 求解，约 1 秒）；Kimi 复用 www.kimi.com 登录态。这些接口属个人自动化用法，可能随网页版改版或风控而失效，请勿用于高并发、批量或上传至 Chrome 商店。
+>
+> 更多安全说明见 [SECURITY.md](SECURITY.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 使用
 
@@ -61,23 +75,38 @@
 - **"未获取到自动字幕"（B 站）**：字幕接口需要 B 站登录态，请先在浏览器登录 B 站后重试；部分视频本身没有自动字幕。
 - **"字幕下载失败"（B 站）**：字幕 JSON 下载已自动在扩展上下文与页面上下文间双重尝试，仍失败通常是接口临时异常，请稍后重试；详情见扩展的 Service Worker / 侧边栏控制台日志（[AiSIDE] 前缀）。
 - **"无法提取正文"**：浏览器内建 PDF 查看器、需登录的页面等无法注入，请切换到普通网页。
+- **提示"需要你授权扩展访问该网站"**：说明当时没有该站点的访问授权（多数是切换标签页后在面板内点「总结当前网页」）。点面板里的「授权访问网站并重试」，或改用扩展图标 / `Ctrl+Shift+U` 触发。
+- **Kimi 附件被降级为内联文本**：结果上方会说明原因——附件超过 2MB，或上传目标域名未被授权。功能仍可用，只是以正文文本方式总结。
 - **B 站接口风控报错**：正常使用频率不会触发；若偶尔出现请稍后再试。
 - **file:// 页面提示权限错误**：在扩展详情页开启「允许访问文件网址」。
-- **获取模型失败**：部分第三方 API 不提供 `/models` 接口，直接在模型输入框手动输入模型名即可。
+- **获取模型失败**：部分第三方 API 不提供 `/models` 接口，直接在模型输入框手动输入模型名即可；若提示网络请求失败，请确认 Base URL 已保存并已授权该域名。
 - **测试连接 401/403**：多为 API Key 无效或未开启对应模型权限。
+- **Base URL 保存失败**：远端地址必须用 HTTPS；只有 `localhost` / `127.0.0.1` / `[::1]` 允许明文 HTTP。
 
 ## 目录结构
 
 ```
 manifest.json       扩展清单（MV3）
-background.js       后台 Service Worker（图标点击、快捷键）
-common.js           公共逻辑（设置、API 请求、正文提取、B 站数据、渲染）
+background.js       后台 Service Worker（图标点击、快捷键、收紧 storage 访问级别）
+common.js           公共逻辑（设置、凭据存储、API 请求、统一 SSE 读取、正文提取、B 站数据、渲染）
 deepseek.js         DeepSeek 账号模式（登录态、PoW 编排、会话、SSE 对话）
-kimi.js             Kimi 网页版账号模式（www.kimi.com 登录态、token 刷新、会话、SSE 对话）
+kimi.js             Kimi 网页版账号模式（www.kimi.com 登录态、token 刷新、附件上传、SSE 对话）
 pow-worker.js       PoW 求解器（纯 JS SHA3-256，Web Worker 内运行）
 sidepanel.html/css/js 侧边栏
 options.html/css/js 设置页
 icons/              扩展图标
-tools/gen_icons.ps1 图标生成脚本（powershell -ExecutionPolicy Bypass -File tools\gen_icons.ps1）
-tools/test_parse.js 单元测试（node tools/test_parse.js）
+tools/gen_icons.ps1 图标生成脚本（仅 Windows，依赖 .NET System.Drawing）
+tools/test_parse.js 单元测试（node tools/test_parse.js，失败返回非零退出码）
+.github/workflows/ci.yml  持续集成（语法检查 + manifest 校验 + 单元测试）
+SECURITY.md         安全说明与漏洞报告方式
+CHANGELOG.md        更新日志（协议兼容与行为变化）
+LICENSE             MIT
 ```
+
+## 许可证
+
+[MIT](LICENSE)。B 站 wbi 签名与字幕接口的实现参考自
+[bilibili-API-collect](https://github.com/SocialSisterYi/bilibili-API-collect) 的公开文档。
+
+本项目与 DeepSeek、Kimi（月之暗面）、哔哩哔哩、OpenAI、Google 均无关联，网页模式属个人自动化
+用法，请自行评估使用风险。
