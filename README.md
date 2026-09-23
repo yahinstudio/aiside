@@ -17,9 +17,10 @@
 
 ## 安装
 
-1. 打开 Chrome，访问 `chrome://extensions`
-2. 打开右上角「开发者模式」
-3. 点击「加载已解压的扩展程序」，选择本目录（`E:\aiside`）
+1. 克隆或下载本仓库到本地任意目录（如 `git clone https://github.com/yahinstudio/aiside.git`）
+2. 打开 Chrome，访问 `chrome://extensions`
+3. 打开右上角「开发者模式」
+4. 点击「加载已解压的扩展程序」，选择克隆或解压后的 AiSIDE 文件夹
 
 > 如需总结 `file://` 本地页面：在扩展详情页打开「允许访问文件网址」开关。
 
@@ -76,7 +77,7 @@ kimi.js             Kimi 网页版账号模式（www.kimi.com 登录态、token 
 pow-worker.js       PoW 求解器（纯 JS SHA3-256，Web Worker 内运行）
 sidepanel.html/css/js 侧边栏
 options.html/css/js 设置页
-icons/              扩展图标（由 D:\logo.png 生成）
+icons/              扩展图标
 tools/gen_icons.ps1 图标生成脚本（powershell -ExecutionPolicy Bypass -File tools\gen_icons.ps1）
 tools/test_parse.js 单元测试（node tools/test_parse.js）
 ```
