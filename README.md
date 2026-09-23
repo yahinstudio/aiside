@@ -95,7 +95,7 @@ pow-worker.js       PoW 求解器（纯 JS SHA3-256，Web Worker 内运行）
 sidepanel.html/css/js 侧边栏
 options.html/css/js 设置页
 icons/              扩展图标
-tools/gen_icons.ps1 图标生成脚本（仅 Windows，依赖 .NET System.Drawing）
+tools/gen_icons.ps1 图标生成脚本（仅 Windows；默认读根目录 logo.png，可用 -Source 指定）
 tools/test_parse.js 单元测试（node tools/test_parse.js，失败返回非零退出码）
 .github/workflows/ci.yml  持续集成（语法检查 + manifest 校验 + 单元测试）
 SECURITY.md         安全说明与漏洞报告方式

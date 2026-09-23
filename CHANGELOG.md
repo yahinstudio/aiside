@@ -39,6 +39,8 @@
   凭据迁移、API Key 存储策略、DeepSeek 401 重试等回归用例。
 - 新增 GitHub Actions CI（语法检查 + manifest 校验 + 单元测试）。
 - 新增 `SECURITY.md`；`CODEBUDDY.md` 补充权限策略、SSE 与超时、凭据存储等说明。
+- `tools/gen_icons.ps1` 不再写死本机路径：默认读取仓库根目录的 `logo.png`，可用 `-Source` /
+  `-OutDir` 指定，缺省源图时给出提示并以非零码退出。
 
 ## 1.8.3 及更早
 

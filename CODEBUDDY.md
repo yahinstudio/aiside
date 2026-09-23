@@ -27,7 +27,9 @@ decision. See `AiSIDE_开发改进实施文档_v1.0.md` §11 for the proposed di
 - **CI:** `.github/workflows/ci.yml` runs syntax checks, a manifest parse, and the test harness on
   every push to `main` and every PR. There is no build step, so CI has nothing to package.
 - **Regenerate icons:** `powershell -ExecutionPolicy Bypass -File tools/gen_icons.ps1`
-  (uses .NET System.Drawing to produce `icons/icon{16,48,128}.png`).
+  (Windows only; .NET System.Drawing produces `icons/icon{16,48,128}.png`). It reads `logo.png`
+  from the repo root by default — the source art is not committed — and takes `-Source` / `-OutDir`
+  to override. Paths resolve relative to the script, so any clone works.
 - **Install/run:** `chrome://extensions` → enable Developer mode → "Load unpacked" → this directory.
   Reload the extension after any source change; the service worker restarts on its own.
   There is no watch mode.
