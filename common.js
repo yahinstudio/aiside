@@ -293,6 +293,106 @@ async function testModel(provider, model) {
   if (!res.ok) throw await parseApiError(res);
 }
 
+// ---------------- 统一 SSE 读取与超时 ----------------
+
+// 流式读空的超时阈值：超过该时长没有收到任何数据即中断。
+// 只限制"空闲"而非总时长，避免打断正常的长时间生成。
+const SSE_IDLE_TIMEOUT_MS = 120000;
+
+// 组合"外部取消"与"内部超时"：返回的 signal 交给 fetch，ctrl 供超时逻辑主动 abort。
+// 仅靠 reader.read() 返回后比较时间戳无法构成硬超时——连接一直挂起时循环体没有执行机会。
+function makeStreamAbort(externalSignal) {
+  const ctrl = new AbortController();
+  const onAbort = () => ctrl.abort(externalSignal.reason);
+  if (externalSignal) {
+    if (externalSignal.aborted) ctrl.abort(externalSignal.reason);
+    else externalSignal.addEventListener("abort", onAbort, { once: true });
+  }
+  return {
+    ctrl,
+    signal: ctrl.signal,
+    dispose: () => {
+      if (externalSignal) externalSignal.removeEventListener("abort", onAbort);
+    },
+  };
+}
+
+// 统一 SSE 解析：归一化 CRLF、处理跨 chunk 的分行与注释行，并在流结束时 flush
+// 解码器尾部与"最后一条没有换行"的记录（此前三处实现各自为政，都会丢这一帧）。
+// yield { event, data }；idleTimeoutMs > 0 时启用空闲硬超时。
+async function* sseEvents(response, { ctrl, idleTimeoutMs = 0 } = {}) {
+  if (!response.body) throw new ApiError("响应不支持流式读取");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let event = "";
+  let timedOut = false;
+  let timer = null;
+  const arm = () => {
+    if (!idleTimeoutMs || !ctrl) return;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      timedOut = true;
+      ctrl.abort();
+    }, idleTimeoutMs);
+  };
+  const disarm = () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+  };
+  const emit = function* (rawLine) {
+    const line = rawLine.replace(/\r$/, "").trim();
+    if (!line) {
+      event = ""; // 空行 = 事件边界
+      return;
+    }
+    if (line.startsWith(":")) return; // 注释/心跳
+    if (line.startsWith("event:")) {
+      event = line.slice(6).trim();
+      return;
+    }
+    if (!line.startsWith("data:")) return;
+    const data = line.slice(5).trim();
+    if (!data) return;
+    yield { event, data };
+  };
+  try {
+    while (true) {
+      arm();
+      let chunk;
+      try {
+        chunk = await reader.read();
+      } finally {
+        disarm();
+      }
+      if (chunk.value) buf += decoder.decode(chunk.value, { stream: true });
+      if (chunk.done) {
+        buf += decoder.decode(); // flush 多字节字符尾部
+        // 缓冲区剩余内容统一处理，同时覆盖"末尾有换行"与"最后一帧无换行"
+        for (const line of buf.split("\n")) yield* emit(line);
+        return;
+      }
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        yield* emit(line);
+      }
+    }
+  } catch (e) {
+    if (timedOut) {
+      throw new ApiError(
+        "连接空闲超时（" + Math.round(idleTimeoutMs / 1000) + " 秒无数据），请重试。"
+      );
+    }
+    throw e;
+  } finally {
+    disarm();
+  }
+}
+
 // ---------------- 流式对话 ----------------
 
 // streamChat 生成器：逐段 yield 文本增量
@@ -360,23 +460,14 @@ async function* streamChat(provider, model, messages, signal, opts) {
     extract = (obj) => extractDelta(obj, "openai");
   }
 
-  const res = await fetch(url, { method: "POST", headers, body, signal });
-  if (!res.ok) throw await parseApiError(res);
-  if (!res.body) throw new ApiError("响应不支持流式读取");
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    let nl;
-    while ((nl = buf.indexOf("\n")) >= 0) {
-      const line = buf.slice(0, nl).trim();
-      buf = buf.slice(nl + 1);
-      if (!line || line.startsWith(":")) continue;
-      const data = line.startsWith("data:") ? line.slice(5).trim() : line;
+  const abort = makeStreamAbort(signal);
+  try {
+    const res = await fetch(url, { method: "POST", headers, body, signal: abort.signal });
+    if (!res.ok) throw await parseApiError(res);
+    for await (const { data } of sseEvents(res, {
+      ctrl: abort.ctrl,
+      idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+    })) {
       if (data === "[DONE]") return;
       let obj;
       try {
@@ -387,6 +478,8 @@ async function* streamChat(provider, model, messages, signal, opts) {
       const text = extract(obj);
       if (text) yield text;
     }
+  } finally {
+    abort.dispose();
   }
 }
 

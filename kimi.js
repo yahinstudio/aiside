@@ -191,40 +191,34 @@ window.KIMI = (() => {
   // 等待文件解析完成：流式返回 {status:"parsing"}…，状态变化（如 "parsed"）时返回该状态
   async function waitFileParsed(fileId, signal) {
     const tokens = await ensureTokens();
-    const deadline = Date.now() + 180000; // 解析最长等 3 分钟
-    const doPost = (t) =>
-      fetch(`${BASE}/api/file/parse_process`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${t.accessToken}`,
-          Referer: `${BASE}/`,
-        },
-        body: JSON.stringify({ ids: [fileId] }),
-        signal,
-      });
-    let res = await doPost(tokens);
-    if (res.status === 401) {
-      res = await doPost(await refreshAccessToken(tokens.refreshToken));
-    }
-    if (!res.ok) {
-      throw new Error(`Kimi 文件解析接口请求失败（HTTP ${res.status}）`);
-    }
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    while (true) {
-      if (Date.now() > deadline) throw new Error("Kimi 文件解析超时，请重试或改用其他 API");
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let nl;
-      while ((nl = buf.indexOf("\n")) >= 0) {
-        const line = buf.slice(0, nl).replace(/\r$/, "").trim();
-        buf = buf.slice(nl + 1);
-        if (!line.startsWith("data:")) continue;
-        const data = line.slice(5).trim();
-        if (!data) continue;
+    const abort = makeStreamAbort(signal);
+    // 解析最长等 3 分钟。用 abort 真正中断挂起的连接——仅在 read() 返回后比较时间戳，
+    // 一旦某次 read() 一直 pending 就没有执行机会，超时永远触发不了。
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      abort.ctrl.abort();
+    }, 180000);
+    try {
+      const doPost = (t) =>
+        fetch(`${BASE}/api/file/parse_process`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${t.accessToken}`,
+            Referer: `${BASE}/`,
+          },
+          body: JSON.stringify({ ids: [fileId] }),
+          signal: abort.signal,
+        });
+      let res = await doPost(tokens);
+      if (res.status === 401) {
+        res = await doPost(await refreshAccessToken(tokens.refreshToken));
+      }
+      if (!res.ok) {
+        throw new Error(`Kimi 文件解析接口请求失败（HTTP ${res.status}）`);
+      }
+      for await (const { data } of sseEvents(res)) {
         let obj;
         try {
           obj = JSON.parse(data);
@@ -233,8 +227,14 @@ window.KIMI = (() => {
         }
         if (obj && obj.status && obj.status !== "parsing") return obj.status;
       }
+      throw new Error("Kimi 文件解析未完成（响应流提前结束）");
+    } catch (e) {
+      if (timedOut) throw new Error("Kimi 文件解析超时，请重试或改用其他 API");
+      throw e;
+    } finally {
+      clearTimeout(timer);
+      abort.dispose();
     }
-    throw new Error("Kimi 文件解析未完成（响应流提前结束）");
   }
 
   // SSE 流式对话：yield 正文文本增量；fileId 传入时以 refs 引用已上传的附件
@@ -242,75 +242,55 @@ window.KIMI = (() => {
   async function* sendMessage(sessionId, content, signal, fileId) {
     const tokens = await ensureTokens();
     const url = `${BASE}/api/chat/${sessionId}/completion/stream`;
-    const doPost = (t) =>
-      fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${t.accessToken}`,
-          Referer: `${BASE}/`,
-        },
-        body: JSON.stringify({
-          messages: [{ role: "user", content }],
-          refs: fileId ? [fileId] : [],
-          use_search: false,
-        }),
-        signal,
-      });
-    let res = await doPost(tokens);
-    if (res.status === 401) {
-      const fresh = await refreshAccessToken(tokens.refreshToken);
-      res = await doPost(fresh);
-    }
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`Kimi 接口请求失败（HTTP ${res.status}）：${text.slice(0, 200)}`);
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    let sseEvent = ""; // data JSON 未带 event 字段时回退用 SSE 的 event: 行
+    const abort = makeStreamAbort(signal);
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        let nl;
-        while ((nl = buf.indexOf("\n")) >= 0) {
-          const line = buf.slice(0, nl).replace(/\r$/, "");
-          buf = buf.slice(nl + 1);
-          if (!line) {
-            sseEvent = ""; // 空行 = 事件边界
-            continue;
-          }
-          if (line.startsWith(":")) continue;
-          if (line.startsWith("event:")) {
-            sseEvent = line.slice(6).trim();
-            continue;
-          }
-          if (!line.startsWith("data:")) continue;
-          const data = line.slice(5).trim();
-          if (!data) continue;
-          let obj;
-          try {
-            obj = JSON.parse(data);
-          } catch (_) {
-            continue;
-          }
-          const ev = (obj && obj.event) || sseEvent;
-          if (ev === "cmpl") {
-            if (obj && typeof obj.text === "string" && obj.text) yield obj.text;
-          } else if (ev === "error") {
-            throw new Error((obj.error && obj.error.message) || "Kimi 对话出错");
-          } else if (ev === "all_done") {
-            return;
-          }
+      const doPost = (t) =>
+        fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${t.accessToken}`,
+            Referer: `${BASE}/`,
+          },
+          body: JSON.stringify({
+            messages: [{ role: "user", content }],
+            refs: fileId ? [fileId] : [],
+            use_search: false,
+          }),
+          signal: abort.signal,
+        });
+      let res = await doPost(tokens);
+      if (res.status === 401) {
+        const fresh = await refreshAccessToken(tokens.refreshToken);
+        res = await doPost(fresh);
+      }
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`Kimi 接口请求失败（HTTP ${res.status}）：${text.slice(0, 200)}`);
+      }
+
+      for await (const { event, data } of sseEvents(res, {
+        ctrl: abort.ctrl,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+      })) {
+        let obj;
+        try {
+          obj = JSON.parse(data);
+        } catch (_) {
+          continue;
+        }
+        // data JSON 未带 event 字段时，回退用 SSE 的 event: 行
+        const ev = (obj && obj.event) || event;
+        if (ev === "cmpl") {
+          if (obj && typeof obj.text === "string" && obj.text) yield obj.text;
+        } else if (ev === "error") {
+          throw new Error((obj.error && obj.error.message) || "Kimi 对话出错");
+        } else if (ev === "all_done") {
+          return;
         }
       }
     } finally {
-      // 连接结束后清空缓冲（无会话删除端点，会话保留在 Kimi 历史）
-      buf = "";
+      abort.dispose();
     }
   }
 

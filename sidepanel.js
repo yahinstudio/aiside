@@ -69,7 +69,7 @@ function showPermissionError() {
 // 降级说明（如 Kimi 附件模式不可用）：贴在总结结果上方，让用户知道本次走了哪条路径
 function renderNote(note) {
   const el = document.createElement("div");
-  el.className = "degrade-note";
+  el.className = "panel-note";
   el.textContent = note;
   contentEl.prepend(el);
 }
@@ -133,8 +133,9 @@ async function summarize() {
       showError("找不到当前标签页，请切换到要总结的网页后重试。");
       return;
     }
-    // 更新追踪：记住当前总结的标签页
+    // 更新追踪：记住当前总结的标签页与地址（用于识别同标签页导航导致的摘要过期）
     lastSummarizedTabId = tab.id;
+    lastSummarizedUrl = tab.url || "";
     hasSummarizedOnce = true;
     if (!isAllowedProtocol(tab)) {
       showError("请在网页上使用：本扩展仅支持 http、https 和 file 页面，请切换到普通网页。");
@@ -421,8 +422,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 // ---------------- 标签页切换检测 ----------------
 
-// 记录上次总结的标签页；-1 表示尚未总结过（首次加载由 init 自动触发）
+// 记录上次总结的标签页与页面地址；-1 表示尚未总结过（首次加载由 init 自动触发）
 let lastSummarizedTabId = -1;
+let lastSummarizedUrl = "";
 let hasSummarizedOnce = false;
 
 // 居中显示"总结当前网页"按钮（切换标签页后出现）
@@ -446,6 +448,35 @@ chrome.tabs.onActivated.addListener(({ tabId }) => {
     activeCtrl = null;
   }
   showSummarizeButton();
+});
+
+// 同一标签页内导航（tabId 不变）：原有摘要已对应不上当前页面，标记为过期并中止输出。
+// 不自动重新总结——避免用户正常浏览时产生额外的模型调用与费用。
+function markSummaryStale() {
+  // 正在输出时半截结果没有保留价值，直接丢弃
+  if (contentEl.querySelector(".loading-center")) contentEl.innerHTML = "";
+  const note = document.createElement("div");
+  note.className = "panel-note";
+  note.textContent = "网页已变化，下方摘要对应的是上一个页面。";
+  const cta = document.createElement("div");
+  cta.className = "summarize-cta";
+  cta.innerHTML = '<button class="cta-btn" id="cta-summarize">总结当前网页</button>';
+  contentEl.prepend(note);
+  contentEl.prepend(cta);
+  const btn = document.getElementById("cta-summarize");
+  if (btn) btn.addEventListener("click", () => summarize());
+}
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (!hasSummarizedOnce || tabId !== lastSummarizedTabId) return;
+  if (!changeInfo.url || changeInfo.url === lastSummarizedUrl) return;
+  seq++;
+  if (activeCtrl) {
+    activeCtrl.abort();
+    activeCtrl = null;
+  }
+  lastSummarizedUrl = changeInfo.url;
+  markSummaryStale();
 });
 
 (async () => {

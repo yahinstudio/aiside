@@ -104,7 +104,7 @@ body {
 }
 
 /* 降级说明：本次总结未走默认路径（如 Kimi 附件模式不可用） */
-.degrade-note {
+.panel-note {
   margin-bottom: 10px;
   padding: 8px 11px;
   background: #fffbeb;

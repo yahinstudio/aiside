@@ -120,6 +120,9 @@ const ctx = {
   JSON,
   TextDecoder,
   URL,
+  AbortController,
+  setTimeout,
+  clearTimeout,
   Array,
   Set,
   Promise,
@@ -668,6 +671,7 @@ function makeDeepSeekCtx(fetchHandler, { tokens, freshToken } = {}) {
     Uint8Array,
     Uint32Array,
     URL,
+    AbortController,
     navigator: { hardwareConcurrency: 2 },
     Worker: FakeWorker,
     btoa: (s) => Buffer.from(s, "binary").toString("base64"),
@@ -989,6 +993,61 @@ function testManifestPermissions() {
   );
 }
 
+// 统一 SSE 解析：EOF 尾帧、CRLF、跨 chunk 分行、event 行，以及空闲硬超时
+async function testSseEvents() {
+  // 1) 最后一帧没有换行也必须产出（改造前三种实现都会丢）
+  const a = { body: makeReader(['data: {"a":1}\n\ndata: {"b":2}']) };
+  const gotA = [];
+  for await (const ev of ctx.sseEvents(a)) gotA.push(ev.data);
+
+  // 2) CRLF + 跨 chunk 分行 + 注释行
+  const b = { body: makeReader([': ping\r\n\r\ndata: {"c"', ':3}\r\n\r\n']) };
+  const gotB = [];
+  for await (const ev of ctx.sseEvents(b)) gotB.push(ev.data);
+
+  // 3) event: 行与其后的 data 一起产出
+  const c = { body: makeReader(["event:done\ndata: x\n\n"]) };
+  const gotC = [];
+  for await (const ev of ctx.sseEvents(c)) gotC.push(ev);
+
+  // 4) 空闲硬超时：read() 一直挂起时能被中断并给出可读错误
+  const abort = ctx.makeStreamAbort(null);
+  const stuck = {
+    body: {
+      getReader: () => ({
+        read: () =>
+          new Promise((_, reject) => {
+            abort.ctrl.signal.addEventListener("abort", () =>
+              reject(Object.assign(new Error("aborted"), { name: "AbortError" }))
+            );
+          }),
+      }),
+    },
+  };
+  let timeoutErr = "";
+  try {
+    for await (const _ of ctx.sseEvents(stuck, { ctrl: abort.ctrl, idleTimeoutMs: 20 })) {
+      /* noop */
+    }
+  } catch (e) {
+    timeoutErr = e.message;
+  }
+
+  const ok =
+    gotA.length === 2 &&
+    gotA[1] === '{"b":2}' &&
+    gotB.length === 1 &&
+    gotB[0] === '{"c":3}' &&
+    gotC.length === 1 &&
+    gotC[0].event === "done" &&
+    gotC[0].data === "x" &&
+    /空闲超时/.test(timeoutErr);
+  console.log(
+    "统一 SSE 解析与空闲超时:",
+    ok ? "PASS" : "FAIL " + JSON.stringify({ gotA, gotB, gotC, timeoutErr })
+  );
+}
+
 function testKimiIsReady() {
   const ok = ctx.isReady({
     providers: { kimi: { type: "kimi" } },
@@ -1017,6 +1076,9 @@ function makeKimiCtx(fetchHandler) {
     fetch: fetchHandler,
     TextDecoder,
     URL,
+    AbortController,
+    setTimeout,
+    clearTimeout,
     Promise,
     JSON,
     Error,
@@ -1161,6 +1223,8 @@ async function testKimiUploadAndRefs() {
   testManifestPermissions();
   testKimiHtmlSanitize();
   testKimiHtmlSizeCap();
+  // Phase 3（可靠性）新增回归
+  await testSseEvents();
 
   // 任一 FAIL → 非零退出码，CI 依据退出码判定
   if (failedCount) {

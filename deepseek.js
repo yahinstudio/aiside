@@ -394,73 +394,66 @@ window.DEEPSEEK = (() => {
     // token 必须可更新：401 后刷新得到的新 token 要同时用于重试的 Authorization、
     // PoW 头（与 token 绑定）以及 finally 中的会话删除
     let token = await ensureToken();
+    const abort = makeStreamAbort(signal);
     let res = null;
-    // 401 时换新 token 重试一次（PoW 头与 token 绑定，需重新求解）
-    for (let attempt = 0; attempt < 2 && !res; attempt++) {
-      const headers = await buildStreamHeaders(token, signal);
-      const tryRes = await fetch(BASE + COMPLETION_PATH, {
-        method: "POST",
-        headers: {
-          ...CLIENT_HEADERS,
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-          ...headers,
-        },
-        body: JSON.stringify({
-          chat_session_id: sessionId,
-          parent_message_id: null,
-          model_type: null,
-          prompt: content,
-          ref_file_ids: [],
-          thinking_enabled: false,
-          search_enabled: false,
-          preempt: false,
-        }),
-        signal,
-      });
-      if (tryRes.status === 401 && attempt === 0) {
-        token = await fetchFreshToken();
-        continue;
-      }
-      if (!tryRes.ok) {
-        const text = await tryRes.text().catch(() => "");
-        if (tryRes.status === 401) {
-          throw new Error("DeepSeek 登录已过期，请重新登录 chat.deepseek.com");
-        }
-        throw new Error(`DeepSeek 接口请求失败（HTTP ${tryRes.status}）：${text.slice(0, 200)}`);
-      }
-      res = tryRes;
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        let nl;
-        while ((nl = buf.indexOf("\n")) >= 0) {
-          const line = buf.slice(0, nl).trim();
-          buf = buf.slice(nl + 1);
-          if (!line.startsWith("data:")) continue;
-          const data = line.slice(5).trim();
-          if (!data) continue;
-          let parsed;
-          try {
-            parsed = JSON.parse(data);
-          } catch (_) {
-            continue;
-          }
-          yield* extractDeltas(parsed);
+      // 401 时换新 token 重试一次（PoW 头与 token 绑定，需重新求解）
+      for (let attempt = 0; attempt < 2 && !res; attempt++) {
+        const headers = await buildStreamHeaders(token, signal);
+        const tryRes = await fetch(BASE + COMPLETION_PATH, {
+          method: "POST",
+          headers: {
+            ...CLIENT_HEADERS,
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            ...headers,
+          },
+          body: JSON.stringify({
+            chat_session_id: sessionId,
+            parent_message_id: null,
+            model_type: null,
+            prompt: content,
+            ref_file_ids: [],
+            thinking_enabled: false,
+            search_enabled: false,
+            preempt: false,
+          }),
+          signal: abort.signal,
+        });
+        if (tryRes.status === 401 && attempt === 0) {
+          token = await fetchFreshToken();
+          continue;
         }
+        if (!tryRes.ok) {
+          const text = await tryRes.text().catch(() => "");
+          if (tryRes.status === 401) {
+            throw new Error("DeepSeek 登录已过期，请重新登录 chat.deepseek.com");
+          }
+          throw new Error(`DeepSeek 接口请求失败（HTTP ${tryRes.status}）：${text.slice(0, 200)}`);
+        }
+        res = tryRes;
+      }
+
+      for await (const { data } of sseEvents(res, {
+        ctrl: abort.ctrl,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+      })) {
+        let parsed;
+        try {
+          parsed = JSON.parse(data);
+        } catch (_) {
+          continue;
+        }
+        yield* extractDeltas(parsed);
       }
     } finally {
-      // 会话用完即删，避免留在 DeepSeek 历史记录
-      apiJSON(token, "/api/v0/chat_session/delete", {
-        body: { chat_session_id: sessionId },
-      }).catch(() => {});
+      abort.dispose();
+      // 会话用完即删，避免留在 DeepSeek 历史记录（仅在确实开始过流式对话时）
+      if (res) {
+        apiJSON(token, "/api/v0/chat_session/delete", {
+          body: { chat_session_id: sessionId },
+        }).catch(() => {});
+      }
     }
   }
 
